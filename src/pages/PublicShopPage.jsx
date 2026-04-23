@@ -4,8 +4,8 @@ import { getBuyerPublicBase } from '../utils/publicShopUrl';
 import { normalizeShopCode } from '../utils/shopCode';
 
 /**
- * Legacy route on the seller app: redirect to the **buyer** storefront.
- * The full ordering UI lives in the buyer app; this only forwards the same path.
+ * Seller app hosts `/shop/:code` and `/s/:slug` only to forward to the **buyer** storefront.
+ * Always redirects to an absolute URL on the buyer origin (never stays on seller).
  */
 export function PublicShopPage() {
   const { code, slug } = useParams();
@@ -23,14 +23,19 @@ export function PublicShopPage() {
     if (!path) {
       return;
     }
-    const search = searchStr ? `?${searchStr}` : '';
-    const target = `${base}${path}${search}`;
+    const qs = searchStr ? `?${searchStr}` : '';
+    let target;
+    try {
+      target = new URL(`${path}${qs}`, base).href;
+    } catch {
+      target = `${String(base).replace(/\/$/, '')}${path}${qs}`;
+    }
     window.location.replace(target);
   }, [code, slug, searchStr]);
 
   return (
     <div className="public-shop-page" style={{ padding: '1.25rem' }}>
-      <p className="muted" style={{ margin: 0 }}>Opening the buyer storefront…</p>
+      <p className="muted" style={{ margin: 0 }}>Opening your shop…</p>
     </div>
   );
 }

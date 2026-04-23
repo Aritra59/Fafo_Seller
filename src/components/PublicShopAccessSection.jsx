@@ -188,7 +188,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       </div>
       {linkBySlug ? (
         <div className="add-item-field" style={{ margin: 0 }}>
-          <span className="label">Short link (slug)</span>
+          <span className="label">Short link</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             <input className="input" readOnly value={linkBySlug} style={{ flex: '1 1 12rem' }} />
             <button
@@ -214,8 +214,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
           />
         ) : (
           <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>
-            Your QR is generated a short time after you open the dashboard. Pull to refresh if it is
-            still missing.
+            Your QR will appear here shortly. If it is still missing, refresh this page.
           </p>
         )}
       </div>
