@@ -5329,3 +5329,13 @@ button {
   gap: 0.25rem;
   flex-shrink: 0;
 }
+
+.menu-groups-active-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0;
+  cursor: pointer;
+}

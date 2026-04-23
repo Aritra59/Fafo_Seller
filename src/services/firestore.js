@@ -861,6 +861,12 @@ export async function updateSellerDocument(sellerId, fields) {
       payload.servingWindow = w;
     }
   }
+  if (fields.menuSession !== undefined) {
+    const s = String(fields.menuSession ?? '').trim();
+    if (s) {
+      payload.menuSession = s;
+    }
+  }
   if (fields.qrCodeUrl !== undefined) {
     const u = fields.qrCodeUrl;
     payload.qrCodeUrl =

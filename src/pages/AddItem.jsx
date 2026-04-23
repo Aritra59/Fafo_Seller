@@ -10,7 +10,7 @@ import {
   recomputeSellerSlotCount,
   updateProduct,
 } from '../services/firestore';
-import { listMenuGroups } from '../services/menuGroupsService';
+import { listMenuGroups, syncMenuGroupAfterProductSave } from '../services/menuGroupsService';
 import {
   compressImageToJpegBlob,
   isAcceptedImageType,
@@ -49,6 +49,7 @@ export function AddItem() {
   const [tagSpecial, setTagSpecial] = useState(false);
   const [available, setAvailable] = useState(true);
   const [menuGroupId, setMenuGroupId] = useState('');
+  const [initialMenuGroupId, setInitialMenuGroupId] = useState('');
   const [menuGroups, setMenuGroups] = useState([]);
   const [discountLabel, setDiscountLabel] = useState('');
   const [discountPercent, setDiscountPercent] = useState('');
@@ -157,7 +158,9 @@ export function AddItem() {
         setExistingImageUrl(img);
 
         const mg = p.menuGroupId;
-        setMenuGroupId(typeof mg === 'string' && mg.trim() ? mg.trim() : '');
+        const gid = typeof mg === 'string' && mg.trim() ? mg.trim() : '';
+        setMenuGroupId(gid);
+        setInitialMenuGroupId(gid);
 
         setProductLoading(false);
       } catch (e) {
@@ -234,6 +237,8 @@ export function AddItem() {
     setImageUploadPct(0);
     try {
       const base = buildBasePayload();
+      const gid =
+        base.menuGroupId && String(base.menuGroupId).trim() ? String(base.menuGroupId).trim() : null;
       if (isEdit) {
         await updateProduct(productId, seller.id, base);
         if (pendingImage) {
@@ -248,6 +253,8 @@ export function AddItem() {
           setExistingImageUrl(url);
           clearPendingImage();
         }
+        await syncMenuGroupAfterProductSave(seller.id, productId, gid, initialMenuGroupId || null);
+        setInitialMenuGroupId(gid || '');
         showToast('Item saved.');
       } else {
         const newId = await createProduct(seller.id, base);
@@ -257,6 +264,8 @@ export function AddItem() {
           await updateProduct(newId, seller.id, { ...base, imageUrl: url });
           clearPendingImage();
         }
+        await syncMenuGroupAfterProductSave(seller.id, newId, gid, null);
+        setInitialMenuGroupId(gid || '');
         showToast('Item created.');
       }
       recomputeSellerSlotCount(seller.id).catch(() => {});
@@ -497,7 +506,7 @@ export function AddItem() {
             <option value="">None (not grouped)</option>
             {menuGroups.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.menuName || g.id}
+                {g.name || g.menuName || g.id}
               </option>
             ))}
           </select>

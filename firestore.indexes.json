@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "menuGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sellerId", "order": "ASCENDING" },
+        { "fieldPath": "sortOrder", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "ads",
       "queryScope": "COLLECTION",
       "fields": [

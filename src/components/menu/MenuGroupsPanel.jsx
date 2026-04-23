@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createMenuGroup,
+  deleteMenuGroup,
   listMenuGroups,
   setMenuGroupProductIds,
+  updateMenuGroupMeta,
 } from '../../services/menuGroupsService';
 
 function productName(p) {
@@ -20,6 +22,8 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editPick, setEditPick] = useState(() => new Set());
+  const [editName, setEditName] = useState('');
+  const [editActive, setEditActive] = useState(true);
 
   const load = useCallback(async () => {
     if (!sellerId) {
@@ -73,6 +77,8 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
   function openEdit(g) {
     setEditingId(g.id);
     setEditPick(pickForGroup(g));
+    setEditName(String(g.name || g.menuName || '').trim() || '');
+    setEditActive(g.active !== false);
   }
 
   function toggleCreate(id) {
@@ -107,7 +113,14 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
     setErr('');
     try {
       const ids = [...createPick];
-      await createMenuGroup(sellerId, { menuName: name, productIds: ids });
+      const nextOrder = groups.length
+        ? Math.max(...groups.map((g) => Number(g.sortOrder) || 0), 0) + 1
+        : 0;
+      await createMenuGroup(sellerId, {
+        menuName: name,
+        productIds: ids,
+        sortOrder: nextOrder,
+      });
       setCreateName('');
       setCreatePick(new Set());
       await load();
@@ -120,15 +133,49 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
 
   async function handleSaveEdit() {
     if (readOnly || !sellerId || !editingId) return;
+    const nameTrim = editName.trim();
+    if (!nameTrim) {
+      setErr('Enter a menu name.');
+      return;
+    }
     setSaving(true);
     setErr('');
     try {
+      await updateMenuGroupMeta(sellerId, editingId, {
+        name: nameTrim,
+        active: editActive,
+      });
       await setMenuGroupProductIds(sellerId, editingId, [...editPick]);
+      // eslint-disable-next-line no-console
+      console.log('Updated menu group', { id: editingId, name: nameTrim, active: editActive });
       setEditingId(null);
       setEditPick(new Set());
+      setEditName('');
       await load();
     } catch (ex) {
       setErr(ex?.message ?? 'Could not save group.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteGroup(g) {
+    if (readOnly || !sellerId) return;
+    if (!window.confirm(`Delete “${g.name || g.menuName}”? Products stay in your catalog; only the group is removed.`)) {
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      await deleteMenuGroup(sellerId, g.id);
+      if (editingId === g.id) {
+        setEditingId(null);
+        setEditPick(new Set());
+        setEditName('');
+      }
+      await load();
+    } catch (ex) {
+      setErr(ex?.message ?? 'Could not delete group.');
     } finally {
       setSaving(false);
     }
@@ -236,7 +283,7 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
                   <div className="menu-groups-list-item__head">
                     <div>
                       <p className="menu-groups-list-name" style={{ margin: 0, fontWeight: 700 }}>
-                        {g.menuName || g.id}
+                        {g.name || g.menuName || g.id}
                       </p>
                       <p className="muted" style={{ margin: '0.2rem 0 0', fontSize: '0.8rem' }}>
                         {countForGroup(g)} product{countForGroup(g) === 1 ? '' : 's'}
@@ -263,10 +310,20 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
                               onClick={() => {
                                 setEditingId(null);
                                 setEditPick(new Set());
+                                setEditName('');
                               }}
                               disabled={saving}
                             >
                               Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn--sm"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={() => void handleDeleteGroup(g)}
+                              disabled={saving}
+                            >
+                              Delete
                             </button>
                             <button
                               type="button"
@@ -278,18 +335,53 @@ export function MenuGroupsPanel({ sellerId, products = [], readOnly = false }) {
                             </button>
                           </>
                         ) : (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn--sm"
-                            onClick={() => openEdit(g)}
-                            disabled={saving}
-                          >
-                            Edit products
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn--sm"
+                              onClick={() => openEdit(g)}
+                              disabled={saving}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn--sm"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={() => void handleDeleteGroup(g)}
+                              disabled={saving}
+                            >
+                              Delete
+                            </button>
+                          </>
                         )}
                       </div>
                     )}
                   </div>
+                  {expanded ? (
+                    <div className="menu-groups-edit-fields stack" style={{ gap: '0.65rem' }}>
+                      <div>
+                        <label className="label" htmlFor={`menu-group-rename-${g.id}`}>
+                          Group name
+                        </label>
+                        <input
+                          id={`menu-group-rename-${g.id}`}
+                          className="input"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          maxLength={80}
+                        />
+                      </div>
+                      <label className="menu-groups-active-row">
+                        <input
+                          type="checkbox"
+                          checked={editActive}
+                          onChange={(e) => setEditActive(e.target.checked)}
+                        />
+                        <span>Active (show in session &amp; storefront when selected)</span>
+                      </label>
+                    </div>
+                  ) : null}
                   {expanded ? (
                     <ul className="menu-groups-pick-list menu-groups-pick-list--nested">
                       {sortedProducts.map((p) => (

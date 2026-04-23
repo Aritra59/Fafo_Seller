@@ -5,6 +5,7 @@ import { isDemoExplorer } from '../constants/demoMode';
 import { useAuth } from '../hooks/useAuth';
 import { useSeller } from '../hooks/useSeller';
 import { getBuyerPhone, getOrderTimeMs } from '../services/analyticsService';
+import { listMenuGroups } from '../services/menuGroupsService';
 import {
   subscribeOrdersBySellerId,
   subscribeProductsBySellerId,
@@ -24,13 +25,6 @@ import {
   resolveShopOpenNow,
   TRIAL_ENDING_DAYS_THRESHOLD,
 } from '../services/sellerHelpers';
-
-const SERVING = [
-  { id: 'morning', label: 'Morning' },
-  { id: 'lunch', label: 'Lunch' },
-  { id: 'dinner', label: 'Dinner' },
-  { id: 'allday', label: 'All Day' },
-];
 
 function normalizeOrderStatus(status) {
   return String(status ?? '').trim().toLowerCase();
@@ -117,6 +111,37 @@ export function Dashboard() {
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(true);
   const [toggleBusy, setToggleBusy] = useState(false);
+  const [menuGroupRows, setMenuGroupRows] = useState(/** @type {any[]} */ ([]));
+
+  useEffect(() => {
+    if (!sellerId) {
+      setMenuGroupRows([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listMenuGroups(sellerId);
+        if (!cancelled) setMenuGroupRows(rows || []);
+      } catch {
+        if (!cancelled) setMenuGroupRows([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sellerId]);
+
+  const sessionOptions = useMemo(() => {
+    const all = { value: 'All Day', label: 'All Day' };
+    const fromGroups = (menuGroupRows || [])
+      .filter((g) => g.active !== false)
+      .map((g) => {
+        const label = String(g.name || g.menuName || '').trim() || g.id;
+        return { value: label, label };
+      });
+    return [all, ...fromGroups];
+  }, [menuGroupRows]);
 
   useEffect(() => {
     if (!sellerId) {
@@ -167,10 +192,26 @@ export function Dashboard() {
 
   const openEffective = seller ? isShopOpenNow(seller) : null;
   const deliveryOn = seller ? seller.deliveryEnabled !== false : true;
-  const serving = String(seller?.servingWindow || 'allday')
-    .trim()
-    .toLowerCase();
-  const servingId = ['morning', 'lunch', 'dinner', 'allday'].includes(serving) ? serving : 'allday';
+
+  const currentMenuSession = useMemo(() => {
+    const ms = seller?.menuSession;
+    if (typeof ms === 'string' && ms.trim()) {
+      return ms.trim();
+    }
+    const sw = String(seller?.servingWindow || 'allday')
+      .trim()
+      .toLowerCase();
+    if (sw === 'allday') return 'All Day';
+    if (sw === 'morning') return 'Morning';
+    if (sw === 'lunch') return 'Lunch';
+    if (sw === 'dinner') return 'Dinner';
+    return 'All Day';
+  }, [seller]);
+
+  const sessionLabel = useMemo(() => {
+    const found = sessionOptions.find((o) => o.value === currentMenuSession);
+    return found ? found.label : currentMenuSession;
+  }, [sessionOptions, currentMenuSession]);
 
   const allowWrite = !isDemoExplorer();
 
@@ -194,9 +235,11 @@ export function Dashboard() {
   };
 
   const onCycleServing = () => {
-    const idx = SERVING.findIndex((s) => s.id === servingId);
-    const next = SERVING[(idx + 1) % SERVING.length].id;
-    void patchSeller({ servingWindow: next });
+    if (sessionOptions.length === 0) return;
+    const idx = sessionOptions.findIndex((o) => o.value === currentMenuSession);
+    const i = idx < 0 ? 0 : idx;
+    const next = sessionOptions[(i + 1) % sessionOptions.length];
+    void patchSeller({ menuSession: next.value });
   };
 
   const onToggleDelivery = () => {
@@ -347,7 +390,7 @@ export function Dashboard() {
         >
           <span className="dashboard-v2-pill-label">Menu session</span>
           <span className="dashboard-v2-pill-value">
-            {SERVING.find((s) => s.id === servingId)?.label ?? 'All Day'}
+            {sessionLabel}
           </span>
         </button>
         <button
