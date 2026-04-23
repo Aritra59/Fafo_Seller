@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CustomerCard } from '../components/CustomerCard';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
 import { reverseGeocodeLatLng } from '../services/geocode';
 import {
@@ -36,6 +37,7 @@ export function Customers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [tab, setTab] = useState('all');
   const [sort, setSort] = useState('recent');
   const [locByRoute, setLocByRoute] = useState({});
@@ -87,10 +89,10 @@ export function Customers() {
           };
         })
         .filter((p) => matchesCustomerFilter(p, tab))
-        .filter((p) => customerMatchesSearch(p, search)),
+        .filter((p) => customerMatchesSearch(p, debouncedSearch)),
       sort,
     );
-  }, [orders, indexes, tab, search, sort]);
+  }, [orders, indexes, tab, debouncedSearch, sort]);
 
   useEffect(() => {
     const aggs = aggregateCustomersFromOrders(orders);

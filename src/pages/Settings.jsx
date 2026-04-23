@@ -17,10 +17,10 @@ import { buildUpiPayUrl } from '../services/upi';
 import { PublicShopAccessSection } from '../components/PublicShopAccessSection';
 
 const TABS = [
-  { id: 'shop', label: 'Shop settings' },
+  { id: 'shop', label: 'Shop profile' },
   { id: 'upi', label: 'UPI details' },
   { id: 'templates', label: 'Templates' },
-  { id: 'shoplogin', label: 'Shop login' },
+  { id: 'public', label: 'Public shop access' },
 ];
 
 export function Settings() {
@@ -442,7 +442,6 @@ export function Settings() {
 
       {tab === 'shop' ? (
         <form className="card stack settings-page-form" onSubmit={saveShop}>
-          <PublicShopAccessSection seller={seller} sellerId={sellerId} readOnly={demo} />
           <div className="add-item-field">
             <label className="label" htmlFor="set-shop-name">
               Shop name
@@ -805,71 +804,77 @@ export function Settings() {
         </form>
       ) : null}
 
-      {tab === 'shoplogin' ? (
-        <form className="card stack settings-page-form" onSubmit={saveShopLoginPassword}>
-          <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
-            Password used with <strong>Shop code</strong> sign-in (separate from your Google or phone
-            account).
-          </p>
-          {seller &&
-          typeof seller.password === 'string' &&
-          String(seller.password).length > 0 ? (
+      {tab === 'public' ? (
+        <div className="stack settings-page-public-wrap" style={{ gap: '0.75rem' }}>
+          <PublicShopAccessSection seller={seller} sellerId={sellerId} readOnly={demo} />
+          <form className="card stack settings-page-form" onSubmit={saveShopLoginPassword}>
+            <h2 className="settings-section-h2" style={{ margin: 0, fontSize: '1rem' }}>
+              Shop code login
+            </h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
+              Password used with <strong>Shop code</strong> sign-in (separate from your Google or phone
+              account).
+            </p>
+            {seller &&
+            typeof seller.password === 'string' &&
+            String(seller.password).length > 0 ? (
+              <div className="add-item-field">
+                <label className="label" htmlFor="set-shop-pw-current">
+                  Current password
+                </label>
+                <input
+                  id="set-shop-pw-current"
+                  className="input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={shopPwCurrent}
+                  onChange={(e) => setShopPwCurrent(e.target.value)}
+                />
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+                No shop password on file yet — set one here to enable shop-code login, or complete
+                onboarding with a password if you are new.
+              </p>
+            )}
             <div className="add-item-field">
-              <label className="label" htmlFor="set-shop-pw-current">
-                Current password
+              <label className="label" htmlFor="set-shop-pw-new">
+                New password
               </label>
               <input
-                id="set-shop-pw-current"
+                id="set-shop-pw-new"
                 className="input"
                 type="password"
-                autoComplete="current-password"
-                value={shopPwCurrent}
-                onChange={(e) => setShopPwCurrent(e.target.value)}
+                autoComplete="new-password"
+                value={shopPwNew}
+                onChange={(e) => setShopPwNew(e.target.value)}
+                minLength={6}
               />
             </div>
-          ) : (
-            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-              No shop password on file yet — set one here to enable shop-code login, or complete
-              onboarding with a password if you are new.
-            </p>
-          )}
-          <div className="add-item-field">
-            <label className="label" htmlFor="set-shop-pw-new">
-              New password
-            </label>
-            <input
-              id="set-shop-pw-new"
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={shopPwNew}
-              onChange={(e) => setShopPwNew(e.target.value)}
-              minLength={6}
-            />
-          </div>
-          <div className="add-item-field">
-            <label className="label" htmlFor="set-shop-pw-new2">
-              Confirm new password
-            </label>
-            <input
-              id="set-shop-pw-new2"
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={shopPwNew2}
-              onChange={(e) => setShopPwNew2(e.target.value)}
-              minLength={6}
-            />
-          </div>
-          {demo ? (
-            <p className="muted" style={{ margin: 0 }}>
-              Demo mode is read-only.
-            </p>
-          ) : null}
-          <button type="submit" className="btn btn-primary" disabled={shopPwBusy || demo}>
-            {shopPwBusy ? 'Saving…' : 'Update shop login password'}
-          </button>
-        </form>
+            <div className="add-item-field">
+              <label className="label" htmlFor="set-shop-pw-new2">
+                Confirm new password
+              </label>
+              <input
+                id="set-shop-pw-new2"
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={shopPwNew2}
+                onChange={(e) => setShopPwNew2(e.target.value)}
+                minLength={6}
+              />
+            </div>
+            {demo ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Demo mode is read-only.
+              </p>
+            ) : null}
+            <button type="submit" className="btn btn-primary" disabled={shopPwBusy || demo}>
+              {shopPwBusy ? 'Saving…' : 'Update shop login password'}
+            </button>
+          </form>
+        </div>
       ) : null}
 
       {tab === 'templates' ? (

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { shortenAddressLabel } from '../services/customerService';
 
@@ -14,7 +15,7 @@ function formatRupee(n) {
   return `₹${Number(n ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
-export function CustomerCard({ profile, locationLabel }) {
+export const CustomerCard = memo(function CustomerCard({ profile, locationLabel }) {
   const {
     routeId,
     name,
@@ -77,4 +78,4 @@ export function CustomerCard({ profile, locationLabel }) {
       </div>
     </Link>
   );
-}
+});

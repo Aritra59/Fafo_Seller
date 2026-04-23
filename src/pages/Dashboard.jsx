@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSeller } from '../hooks/useSeller';
-import { normalizeShopCode, subscribeOrdersBySellerId } from '../services/firestore';
-import { GetMoreOrdersCard } from '../components/GetMoreOrdersCard';
+import { subscribeOrdersBySellerId } from '../services/firestore';
 import {
   canBuyersPlaceOrders,
   checkTrialStatus,
@@ -95,10 +94,6 @@ export function Dashboard() {
   const openNow = seller ? isShopOpenNow(seller) : null;
   const modeLabel = seller ? getSellerModeLabel(seller) : '—';
   const displayBalance = seller ? getSellerDisplayBalance(seller) : null;
-
-  const shopCodeDisplay = seller
-    ? normalizeShopCode(String(seller.shopCode ?? seller.code ?? '').trim()) || ''
-    : '';
 
   const liveNoSlotsWarning =
     isLiveAccount && !slotsOk
@@ -220,48 +215,6 @@ export function Dashboard() {
           </span>
         </Link>
       </header>
-
-      <GetMoreOrdersCard seller={seller} readOnly={false} />
-
-      {shopCodeDisplay ? (
-        <section className="dashboard-shop-code-card" aria-label="Your shop code">
-          <div className="dashboard-shop-code-card-inner">
-            <p className="dashboard-shop-code-label muted" style={{ margin: 0 }}>
-              Shop code
-            </p>
-            <p className="dashboard-shop-code-value" translate="no">
-              {shopCodeDisplay}
-            </p>
-            <div className="dashboard-shop-code-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ fontSize: '0.8125rem', padding: '0.45rem 0.75rem' }}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(shopCodeDisplay);
-                  } catch {
-                    window.prompt('Copy shop code:', shopCodeDisplay);
-                  }
-                }}
-              >
-                Copy code
-              </button>
-              <a
-                className="btn btn-primary"
-                style={{ fontSize: '0.8125rem', padding: '0.45rem 0.75rem' }}
-                href={`https://wa.me/?text=${encodeURIComponent(
-                  `My FaFo shop code: ${shopCodeDisplay}\nShare this code so customers can find us on FaFo.`,
-                )}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Share on WhatsApp
-              </a>
-            </div>
-          </div>
-        </section>
-      ) : null}
 
       {showTrialUi ? (
         <section
@@ -427,21 +380,19 @@ export function Dashboard() {
               Repeat buyers from order history
             </span>
           </Link>
+          <Link to="/analytics" className="dashboard-link-card">
+            <span className="dashboard-link-card-title">Insights / Analytics</span>
+            <span className="muted dashboard-link-card-desc">
+              KPIs, trends, menu and customer signals
+            </span>
+          </Link>
           <Link to="/settings" className="dashboard-link-card">
             <span className="dashboard-link-card-title">Settings</span>
             <span className="muted dashboard-link-card-desc">
-              Shop hours, UPI, message templates
+              Shop hours, UPI, public shop link, templates
             </span>
           </Link>
         </div>
-      </section>
-
-      <section className="dashboard-insights card" aria-label="Insights">
-        <h2 className="dashboard-insights-title">Insights</h2>
-        <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
-          Peak hours and top items will appear here once you start receiving orders.
-          Keep your menu updated to improve visibility.
-        </p>
       </section>
 
       <footer className="dashboard-cta">

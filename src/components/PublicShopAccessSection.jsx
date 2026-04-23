@@ -3,7 +3,6 @@ import { isDemoExplorer } from '../constants/demoMode';
 import { logShopVisit } from '../services/firestore';
 import { normalizeShopCode } from '../utils/shopCode';
 import {
-  appendStorefrontSource,
   publicShopByCodeUrl,
   publicShopBySlugUrl,
   publicShopQrTargetUrl,
@@ -86,7 +85,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
 
   const onPreview = useCallback(() => {
     if (!code) return;
-    const url = linkByCode ? appendStorefrontSource(linkByCode, 'link') : '';
+    const url = publicShopByCodeUrl(code);
     if (!url) return;
     window.open(url, '_blank', 'noopener,noreferrer');
     const id = String(sid ?? '').trim();
@@ -94,7 +93,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       const dev = typeof navigator !== 'undefined' ? navigator.userAgent : '';
       void logShopVisit({ sellerId: id, source: 'link', device: dev, path: 'settings_preview' });
     }
-  }, [code, linkByCode, sid]);
+  }, [code, sid]);
 
   const onWhatsappClick = useCallback(() => {
     const id = String(sid ?? '').trim();
@@ -153,14 +152,28 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       >
         Public shop access
       </h2>
-      <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-        Links and QR open your <strong>buyer storefront</strong> (full ordering). Dev default:{' '}
-        <code style={{ color: 'var(--text)' }}>http://localhost:3000/shop/…</code> — set{' '}
-        <code style={{ color: 'var(--text)' }}>VITE_BUYER_STOREFRONT_BASE</code> for production.
-      </p>
+      <div className="public-shop-code-block">
+        <span className="label" style={{ marginBottom: '0.25rem' }}>
+          Shop code
+        </span>
+        <div className="public-shop-code-block-inner">
+          <p className="public-shop-code-block-value" translate="no">
+            {code}
+          </p>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={readOnly}
+            style={{ fontSize: '0.8125rem', flexShrink: 0 }}
+            onClick={() => void copy(code)}
+          >
+            Copy code
+          </button>
+        </div>
+      </div>
       {copyMsg ? <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>{copyMsg}</p> : null}
       <div className="add-item-field" style={{ margin: 0 }}>
-        <span className="label">Shop link (code)</span>
+        <span className="label">Shop link</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
           <input className="input" readOnly value={linkByCode} style={{ flex: '1 1 12rem' }} />
           <button
@@ -190,11 +203,11 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
         </div>
       ) : null}
       <div className="add-item-field" style={{ margin: 0 }}>
-        <span className="label">QR code (buyer storefront)</span>
+        <span className="label">QR code</span>
         {storedQr ? (
           <img
             src={storedQr}
-            alt="QR to open your buyer storefront"
+            alt="QR code for your shop link"
             className="settings-qr-preview"
             style={{ maxWidth: 200, display: 'block' }}
             loading="lazy"

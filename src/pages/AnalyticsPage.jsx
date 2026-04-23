@@ -29,7 +29,6 @@ import {
 } from '../services/firestore';
 import { getRangesForPeriod } from '../utils/analyticsDate';
 import { formatInr, pctChange } from '../utils/analyticsMath';
-import { AnalyticsHeader } from '../components/analytics/Header';
 import { PeriodTabs } from '../components/analytics/PeriodTabs';
 import { MainTabs } from '../components/analytics/MainTabs';
 import { SubFilterPills } from '../components/analytics/SubFilterPills';
@@ -37,6 +36,8 @@ import { KpiGrid } from '../components/analytics/KpiGrid';
 import { GrowthSection } from '../components/analytics/GrowthSection';
 import { InsightSection } from '../components/analytics/InsightSection';
 import './analytics.css';
+
+/** Metrics are rule-based from Firestore — see `analyticsService.js` file header (not an AI model). */
 
 function countedInRange(orders, range) {
   return filterOrdersInDateRange(orders, range).filter((o) => isStatusCounted(o.status));
@@ -271,17 +272,13 @@ export function AnalyticsPage() {
     }, [orders, ranges, period, mainTab, menuSub, customerSub, products, lifetimeMap]);
 
   const empty = !loading && orders.length === 0;
-  const shopName = seller?.shopName?.trim() || 'Shop';
-  const owner = seller?.ownerName?.trim() || shopName;
 
   if (!sellerId) {
     return (
       <div className="analytics-page">
-        <AnalyticsHeader shopName={shopName} ownerName={owner} />
-        <div className="analytics-title-row" style={{ marginTop: '0.75rem' }}>
-          <h1 className="analytics-h1" style={{ margin: 0 }}>Analytics</h1>
-          <span className="analytics-ai-pill">AI Active</span>
-        </div>
+        <h1 className="analytics-h1" style={{ margin: '0 0 0.35rem' }}>
+          Analytics
+        </h1>
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
           {loading ? 'Loading your shop…' : 'Set up your shop to see analytics.'}
         </p>
@@ -291,11 +288,9 @@ export function AnalyticsPage() {
 
   return (
     <div className="analytics-page">
-      <AnalyticsHeader shopName={shopName} ownerName={owner} />
-      <div className="analytics-title-row">
-        <h1 className="analytics-h1">Analytics</h1>
-        <span className="analytics-ai-pill">AI Active</span>
-      </div>
+      <h1 className="analytics-h1" style={{ margin: '0 0 0.35rem' }}>
+        Analytics
+      </h1>
       {loading ? (
         <p className="muted" style={{ fontSize: '0.75rem', margin: '0 0 0.5rem' }}>
           Loading your shop data…

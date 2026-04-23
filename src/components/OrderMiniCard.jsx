@@ -22,7 +22,7 @@ export function OrderMiniCard({ order }) {
   }
 
   return (
-    <button type="button" className="order-mini-card" onClick={go}>
+    <button type="button" className="order-mini-card order-mini-card--square" onClick={go}>
       <span className="order-mini-card__id-label">order id</span>
       <span className="order-mini-card__id">{shortId(order.id)}</span>
 

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
+import { OrderDetailsModal } from '../components/OrderDetailsModal';
 import { useSeller } from '../hooks/useSeller';
+import { lineItemCount } from '../services/customerService';
 import {
   createQuickOrder,
   patchOrder,
@@ -29,7 +31,6 @@ function normalizeStatus(status) {
   return String(status ?? '').trim().toLowerCase();
 }
 
-/** Filter one order for the active tab (dynamic when `tab` or `orders` changes). */
 function orderMatchesTab(order, tabId) {
   const s = normalizeStatus(order.status);
   switch (tabId) {
@@ -91,9 +92,6 @@ function buildReadyWhatsAppBody(seller, order) {
   return `Hello ${buyer},\nYour order from ${shop} is ready.\nPlease collect it.\nOrder ID: ${oid}`;
 }
 
-/**
- * Open WhatsApp to buyer (digits-only `wa.me` number).
- */
 function openWhatsAppWithBody(order, body) {
   const raw =
     order.buyerPhone ??
@@ -107,40 +105,16 @@ function openWhatsAppWithBody(order, body) {
   window.open(`https://wa.me/${digits}?text=${message}`, '_blank', 'noopener,noreferrer');
 }
 
-function normalizeLineItems(order) {
-  const raw = order.items ?? order.lineItems ?? order.lines;
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return [];
-  }
-  return raw.map((line) => {
-    const name =
-      line.name ?? line.title ?? line.productName ?? line.label ?? 'Item';
-    const qty = line.quantity ?? line.qty ?? 1;
-    const q = Number(qty);
-    const qtyLabel = Number.isFinite(q) && q > 0 ? q : 1;
-    const unitRaw = line.price ?? line.unitPrice;
-    const unit = unitRaw != null ? Number(unitRaw) : null;
-    const unitOk = Number.isFinite(unit) && unit >= 0;
-    const lineTotal = unitOk ? unit * qtyLabel : null;
-    return {
-      name: String(name),
-      quantity: qtyLabel,
-      unitPrice: unitOk ? unit : null,
-      lineTotal: lineTotal != null && Number.isFinite(lineTotal) ? lineTotal : null,
-    };
-  });
-}
-
 function statusBadgeClass(status) {
   const s = normalizeStatus(status);
-  if (s === 'new') return 'orders-card-status orders-card-status--new';
-  if (s === 'confirmed') return 'orders-card-status orders-card-status--confirmed';
-  if (s === 'preparing') return 'orders-card-status orders-card-status--preparing';
-  if (s === 'ready') return 'orders-card-status orders-card-status--ready';
+  if (s === 'new') return 'orders-pos-badge orders-pos-badge--new';
+  if (s === 'confirmed') return 'orders-pos-badge orders-pos-badge--confirmed';
+  if (s === 'preparing') return 'orders-pos-badge orders-pos-badge--preparing';
+  if (s === 'ready') return 'orders-pos-badge orders-pos-badge--ready';
   if (HISTORY_STATUSES.has(s)) {
-    return 'orders-card-status orders-card-status--history';
+    return 'orders-pos-badge orders-pos-badge--history';
   }
-  return 'orders-card-status orders-card-status--muted';
+  return 'orders-pos-badge orders-pos-badge--muted';
 }
 
 function statusBadgeLabel(status) {
@@ -172,15 +146,193 @@ function formatRupee(n) {
   return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
-function formatCreatedAt(ts) {
-  if (ts == null) return '';
+function formatCreatedParts(ts) {
+  if (ts == null) return { date: '', time: '' };
   try {
     const d = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+    if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+    return {
+      date: d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+      time: d.toLocaleTimeString('en-IN', { timeStyle: 'short' }),
+    };
   } catch {
-    return '';
+    return { date: '', time: '' };
   }
+}
+
+const OrderPosTile = memo(function OrderPosTile({ order, onSelect }) {
+  const total = orderTotal(order);
+  const items = lineItemCount(order) || 0;
+  const { date, time } = formatCreatedParts(order.createdAt);
+  const bName = buyerDisplayName(order);
+  const phone = buyerPhone(order);
+  const st = normalizeStatus(order.status);
+
+  return (
+    <button
+      type="button"
+      className="orders-pos-tile"
+      onClick={() => onSelect(order)}
+      aria-label={`Order ${shortOrderId(order.id)}, ${statusBadgeLabel(order.status)}`}
+    >
+      <div className="orders-pos-tile__top">
+        <span className={statusBadgeClass(order.status)}>{statusBadgeLabel(order.status)}</span>
+        <code className="orders-pos-tile__id" translate="no">
+          {shortOrderId(order.id)}
+        </code>
+      </div>
+      <p className="orders-pos-tile__buyer">
+        {bName ? <span className="orders-pos-tile__name">{bName}</span> : null}
+        {bName ? <span className="orders-pos-tile__sep"> · </span> : null}
+        <span className="orders-pos-tile__phone">{phone}</span>
+      </p>
+      <div className="orders-pos-tile__row">
+        <span className="orders-pos-tile__total">{formatRupee(total)}</span>
+        <span className="orders-pos-tile__meta">
+          {items} item{items === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="orders-pos-tile__time muted">
+        {date ? (
+          <>
+            <span>{date}</span>
+            {time ? <span className="orders-pos-tile__time-sep">{time}</span> : null}
+          </>
+        ) : (
+          '—'
+        )}
+      </div>
+      {st === 'new' ? (
+        <p className="orders-pos-tile__hint muted">Tap for payment check &amp; confirm</p>
+      ) : null}
+    </button>
+  );
+});
+
+function orderHasModalActions(order, tabId) {
+  const st = normalizeStatus(order.status);
+  if (tabId === 'new' && st === 'new') return true;
+  if (tabId === 'preparing' && (st === 'confirmed' || st === 'preparing')) return true;
+  if (tabId === 'ready' && st === 'ready') return true;
+  return false;
+}
+
+function OrderModalActions({
+  order,
+  tab,
+  busyOrderId,
+  demoReadOnly,
+  acceptByOrder,
+  setAcceptByOrder,
+  onConfirm,
+  onCancel,
+  onStartPreparing,
+  onMarkReady,
+  onMarkComplete,
+  onWhatsAppReady,
+}) {
+  const st = normalizeStatus(order.status);
+  const actionDisabled = busyOrderId === order.id || demoReadOnly;
+  const showNewActions = tab === 'new' && st === 'new';
+  const showConfirmedStart = tab === 'preparing' && st === 'confirmed';
+  const showMarkReady = tab === 'preparing' && st === 'preparing';
+  const showReadyActions = tab === 'ready' && st === 'ready';
+  const acceptInteractive = st === 'new';
+  const acceptChecked = acceptInteractive ? Boolean(acceptByOrder[order.id]) : true;
+
+  return (
+    <div className="orders-modal-actions stack" style={{ gap: '0.65rem' }}>
+      {acceptInteractive ? (
+        <label className={`orders-card-pref orders-card-pref--pay${!acceptInteractive ? ' orders-card-pref--disabled' : ''}`}>
+          <input
+            type="checkbox"
+            className="orders-card-pref-input"
+            disabled={!acceptInteractive}
+            checked={acceptChecked}
+            onChange={(e) => {
+              setAcceptByOrder((prev) => ({
+                ...prev,
+                [order.id]: e.target.checked,
+              }));
+            }}
+          />
+          <span className="orders-card-pref-meta">
+            <span className="orders-card-pref-title">Payment received</span>
+            <span className="orders-card-pref-sub">Required before you can confirm this order</span>
+          </span>
+        </label>
+      ) : null}
+
+      {showNewActions ? (
+        <div className="orders-card-actions orders-card-actions--split">
+          <button
+            type="button"
+            className="btn btn-primary orders-card-action"
+            disabled={actionDisabled || !acceptByOrder[order.id]}
+            onClick={() => onConfirm(order.id)}
+          >
+            {busyOrderId === order.id ? 'Saving…' : 'Confirm order'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost orders-card-action orders-card-action--danger"
+            disabled={actionDisabled}
+            onClick={() => onCancel(order.id)}
+          >
+            Cancel order
+          </button>
+        </div>
+      ) : null}
+
+      {showConfirmedStart ? (
+        <div className="orders-card-actions">
+          <button
+            type="button"
+            className="btn btn-primary orders-card-action"
+            disabled={actionDisabled}
+            onClick={() => onStartPreparing(order.id)}
+          >
+            {busyOrderId === order.id ? 'Updating…' : 'Start preparing'}
+          </button>
+        </div>
+      ) : null}
+
+      {showMarkReady ? (
+        <div className="orders-card-actions">
+          <button
+            type="button"
+            className="btn btn-primary orders-card-action"
+            disabled={actionDisabled}
+            onClick={() => onMarkReady(order)}
+          >
+            {busyOrderId === order.id ? 'Updating…' : 'Mark ready'}
+          </button>
+        </div>
+      ) : null}
+
+      {showReadyActions ? (
+        <div className="orders-card-actions orders-card-actions--split">
+          <button
+            type="button"
+            className="btn btn-ghost orders-card-action"
+            disabled={actionDisabled}
+            onClick={() => onWhatsAppReady(order)}
+          >
+            Send WhatsApp
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary orders-card-action"
+            disabled={actionDisabled}
+            onClick={() => onMarkComplete(order.id)}
+          >
+            {busyOrderId === order.id ? 'Updating…' : 'Mark completed'}
+          </button>
+        </div>
+      ) : null}
+
+    </div>
+  );
 }
 
 export function Orders() {
@@ -196,12 +348,24 @@ export function Orders() {
   const [quickTotal, setQuickTotal] = useState('');
   const [quickPayment, setQuickPayment] = useState('cash');
   const [quickBusy, setQuickBusy] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const demoReadOnly = isDemoExplorer();
-  /** Per order: must check before Confirm (new orders only). */
   const [acceptByOrder, setAcceptByOrder] = useState({});
   const [productRows, setProductRows] = useState([]);
   const [quickLines, setQuickLines] = useState([{ productId: '', qty: '1' }]);
   const [quickAddress, setQuickAddress] = useState('');
+
+  const selectedOrder = useMemo(
+    () => (selectedOrderId ? orders.find((o) => o.id === selectedOrderId) ?? null : null),
+    [orders, selectedOrderId],
+  );
+
+  useEffect(() => {
+    if (selectedOrderId && !orders.some((o) => o.id === selectedOrderId)) {
+      setSelectedOrderId(null);
+    }
+  }, [orders, selectedOrderId]);
 
   useEffect(() => {
     if (!sellerId) {
@@ -248,6 +412,9 @@ export function Orders() {
     () => orders.filter((o) => orderMatchesTab(o, tab)),
     [orders, tab],
   );
+
+  const openQuick = useCallback(() => setQuickOpen(true), []);
+  const closeQuick = useCallback(() => setQuickOpen(false), []);
 
   async function handleConfirmOrder(orderId) {
     if (!sellerId || !acceptByOrder[orderId]) return;
@@ -384,6 +551,8 @@ export function Orders() {
       setQuickLines([{ productId: '', qty: '1' }]);
       setQuickTotal('');
       setQuickPayment('cash');
+      setQuickOpen(false);
+      setTab('preparing');
     } catch (err) {
       setActionError(err.message ?? 'Could not save quick order.');
     } finally {
@@ -429,138 +598,21 @@ export function Orders() {
   }
 
   return (
-    <div className="orders-page">
-      <header className="orders-page-header">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
+    <div className="orders-page orders-page--pos">
+      <header className="orders-page-header orders-page-header--title-row">
+        <h1 className="orders-page-title" style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
           Orders
         </h1>
+        <button
+          type="button"
+          className="orders-quick-header-btn btn btn-primary"
+          onClick={openQuick}
+          aria-haspopup="dialog"
+          aria-expanded={quickOpen}
+        >
+          + Quick order
+        </button>
       </header>
-
-      <section className="card orders-quick" aria-labelledby="orders-quick-title">
-        <h2 id="orders-quick-title" style={{ margin: 0, fontSize: '1.05rem' }}>
-          Quick order (walk-in)
-        </h2>
-        <p className="muted" style={{ margin: '0.35rem 0 0.75rem', fontSize: '0.875rem' }}>
-          Creates a manual order in <strong>Preparing</strong> (skips New). Use for counter /
-          phone orders.
-        </p>
-        {demoReadOnly ? (
-          <p className="muted" style={{ margin: 0 }}>
-            Sign in to create real quick orders. Demo mode is read-only.
-          </p>
-        ) : (
-          <form className="orders-quick-form stack" onSubmit={handleQuickOrder}>
-            <div className="orders-quick-row">
-              <label className="orders-quick-field">
-                <span className="orders-quick-label">Buyer name</span>
-                <input
-                  className="input"
-                  value={quickBuyerName}
-                  onChange={(ev) => setQuickBuyerName(ev.target.value)}
-                  autoComplete="name"
-                  required
-                />
-              </label>
-              <label className="orders-quick-field">
-                <span className="orders-quick-label">Phone</span>
-                <input
-                  className="input"
-                  type="tel"
-                  value={quickBuyerPhone}
-                  onChange={(ev) => setQuickBuyerPhone(ev.target.value)}
-                  autoComplete="tel"
-                  required
-                />
-              </label>
-            </div>
-            <div className="orders-quick-row">
-              <label className="orders-quick-field orders-quick-field--grow">
-                <span className="orders-quick-label">Address (optional)</span>
-                <input
-                  className="input"
-                  value={quickAddress}
-                  onChange={(ev) => setQuickAddress(ev.target.value)}
-                  placeholder="Delivery / pickup notes"
-                />
-              </label>
-            </div>
-            <div className="stack" style={{ gap: '0.65rem' }}>
-              <span className="orders-quick-label">Items from menu</span>
-              {quickLines.map((line, idx) => (
-                <div className="orders-quick-row" key={`ql-${idx}`}>
-                  <label className="orders-quick-field orders-quick-field--grow">
-                    <span className="sr-only">Product</span>
-                    <select
-                      className="input"
-                      value={line.productId}
-                      onChange={(ev) => updateQuickLine(idx, { productId: ev.target.value })}
-                      required={idx === 0}
-                    >
-                      <option value="">Select product…</option>
-                      {productRows.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {String(p.name ?? p.title ?? p.id)} — ₹{Number(p.price ?? 0)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="orders-quick-field">
-                    <span className="sr-only">Qty</span>
-                    <input
-                      className="input"
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={line.qty}
-                      onChange={(ev) => updateQuickLine(idx, { qty: ev.target.value })}
-                      aria-label="Quantity"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => removeQuickLine(idx)}
-                    disabled={quickLines.length <= 1}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="btn btn-ghost" onClick={addQuickLine}>
-                + Add line
-              </button>
-            </div>
-            <div className="orders-quick-row">
-              <label className="orders-quick-field">
-                <span className="orders-quick-label">Total (₹)</span>
-                <input
-                  className="input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={quickTotal}
-                  onChange={(ev) => setQuickTotal(ev.target.value)}
-                  placeholder="Leave 0 to auto-sum lines"
-                />
-              </label>
-              <label className="orders-quick-field">
-                <span className="orders-quick-label">Payment</span>
-                <select
-                  className="input"
-                  value={quickPayment}
-                  onChange={(ev) => setQuickPayment(ev.target.value)}
-                >
-                  <option value="cash">Cash</option>
-                  <option value="upi">UPI</option>
-                </select>
-              </label>
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={quickBusy}>
-              {quickBusy ? 'Saving…' : 'Save quick order'}
-            </button>
-          </form>
-        )}
-      </section>
 
       <div className="orders-page-tabs" role="tablist" aria-label="Order status">
         {TABS.map((t) => (
@@ -579,8 +631,7 @@ export function Orders() {
 
       {ordersError ? (
         <p className="error orders-page-error" style={{ margin: 0 }}>
-          {ordersError.message ?? 'Could not load orders.'}
-          {' '}
+          {ordersError.message ?? 'Could not load orders.'}{' '}
           <span className="muted" style={{ fontSize: '0.875rem' }}>
             If this is your first time, create the Firestore index for{' '}
             <code className="orders-page-code">sellerId</code> +{' '}
@@ -606,229 +657,188 @@ export function Orders() {
           </p>
         </div>
       ) : (
-        <ul className="orders-page-list">
-          {filtered.map((o) => {
-            const lines = normalizeLineItems(o);
-            const total = orderTotal(o);
-            const when = formatCreatedAt(o.createdAt);
-            const st = normalizeStatus(o.status);
-            const actionDisabled = busyOrderId === o.id || demoReadOnly;
-            const bName = buyerDisplayName(o);
-            const sourceQuick = String(o.source ?? '').toLowerCase() === 'quick';
-            const showNewActions = tab === 'new' && st === 'new';
-            const showConfirmedStart = tab === 'preparing' && st === 'confirmed';
-            const showMarkReady = tab === 'preparing' && st === 'preparing';
-            const showReadyActions = tab === 'ready' && st === 'ready';
-            const acceptInteractive = st === 'new';
-            const acceptChecked = acceptInteractive
-              ? Boolean(acceptByOrder[o.id])
-              : true;
-            const addr =
-              typeof o.buyerAddress === 'string' && o.buyerAddress.trim()
-                ? o.buyerAddress.trim()
-                : typeof o.address === 'string' && o.address.trim()
-                  ? o.address.trim()
-                  : '';
-            const payMode = String(o.paymentMode ?? o.payment ?? '—').trim() || '—';
-
-            return (
-              <li key={o.id}>
-                <article className="orders-card card">
-                  <div className="orders-card-head">
-                    <span className={statusBadgeClass(o.status)}>
-                      {statusBadgeLabel(o.status)}
-                    </span>
-                    {when ? (
-                      <span className="orders-card-time">{when}</span>
-                    ) : (
-                      <span className="orders-card-time orders-card-time--empty">—</span>
-                    )}
-                  </div>
-                  <p className="muted orders-card-source" style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem' }}>
-                    {sourceQuick ? 'Source · Walk-in (quick)' : 'Source · Buyer app'}
-                  </p>
-
-                  <div className="orders-card-meta">
-                    <div className="orders-card-meta-block">
-                      <span className="orders-card-meta-label">Order</span>
-                      <p className="orders-card-id-wrap" title={o.id}>
-                        <code className="orders-card-id-code">{shortOrderId(o.id)}</code>
-                      </p>
-                    </div>
-                    <div className="orders-card-meta-block orders-card-meta-block--phone">
-                      <span className="orders-card-meta-label">Buyer</span>
-                      <p className="orders-card-phone-value">
-                        {bName ? (
-                          <>
-                            <span className="orders-card-buyer-name">{bName}</span>
-                            <span className="orders-card-buyer-sep"> · </span>
-                          </>
-                        ) : null}
-                        <span>{buyerPhone(o)}</span>
-                      </p>
-                    </div>
-                    <div className="orders-card-meta-block">
-                      <span className="orders-card-meta-label">Payment</span>
-                      <p className="orders-card-phone-value" style={{ margin: 0 }}>
-                        {payMode}
-                      </p>
-                    </div>
-                  </div>
-                  {addr ? (
-                    <p className="muted" style={{ margin: '0.35rem 0 0', fontSize: '0.875rem' }}>
-                      <strong>Address:</strong> {addr}
-                    </p>
-                  ) : null}
-
-                  <div className="orders-card-section">
-                    <p className="orders-card-section-title">Items</p>
-                    {lines.length > 0 ? (
-                      <ul className="orders-card-item-grid">
-                        {lines.map((line, idx) => {
-                          const lineAmt =
-                            line.lineTotal != null
-                              ? line.lineTotal
-                              : line.unitPrice != null
-                                ? line.unitPrice * line.quantity
-                                : null;
-                          return (
-                            <li key={`${o.id}-line-${idx}`} className="orders-card-item-tile">
-                              <span className="orders-card-item-tile-name">{line.name}</span>
-                              <span className="orders-card-item-tile-qty">×{line.quantity}</span>
-                              <span className="orders-card-price-tag">
-                                {lineAmt != null && Number.isFinite(lineAmt)
-                                  ? formatRupee(lineAmt)
-                                  : '—'}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : (
-                      <p className="muted orders-card-no-items" style={{ margin: 0 }}>
-                        No line items
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="orders-card-summary" aria-label="Order summary">
-                    <div className="orders-card-summary-inner">
-                      <span className="orders-card-summary-label">Order total</span>
-                      <span className="orders-card-summary-amount">{formatRupee(total)}</span>
-                    </div>
-                  </div>
-
-                  <div className="orders-card-eta" role="status">
-                    <div className="orders-card-eta-row">
-                      <span className="orders-card-eta-label">ETA</span>
-                      <span className="orders-card-eta-value muted">—</span>
-                    </div>
-                    <span className="orders-card-eta-hint">Estimated pickup</span>
-                  </div>
-
-                  <div className="orders-card-prefs" aria-label="Order options">
-                    <label
-                      className={`orders-card-pref orders-card-pref--pay${!acceptInteractive ? ' orders-card-pref--disabled' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="orders-card-pref-input"
-                        disabled={!acceptInteractive}
-                        checked={acceptChecked}
-                        onChange={(e) => {
-                          if (!acceptInteractive) return;
-                          setAcceptByOrder((prev) => ({
-                            ...prev,
-                            [o.id]: e.target.checked,
-                          }));
-                        }}
-                      />
-                      <span className="orders-card-pref-meta">
-                        <span className="orders-card-pref-title">Payment received</span>
-                        <span className="orders-card-pref-sub">
-                          Required before you can confirm this order
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-
-                  {showNewActions ? (
-                    <div className="orders-card-actions orders-card-actions--split">
-                      <button
-                        type="button"
-                        className="btn btn-primary orders-card-action"
-                        disabled={actionDisabled || !acceptByOrder[o.id]}
-                        onClick={() => handleConfirmOrder(o.id)}
-                      >
-                        {busyOrderId === o.id ? 'Saving…' : 'Confirm order'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost orders-card-action orders-card-action--danger"
-                        disabled={actionDisabled}
-                        onClick={() => handleCancelOrder(o.id)}
-                      >
-                        Cancel order
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {showConfirmedStart ? (
-                    <div className="orders-card-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary orders-card-action"
-                        disabled={actionDisabled}
-                        onClick={() => handleStartPreparing(o.id)}
-                      >
-                        {busyOrderId === o.id ? 'Updating…' : 'Start preparing'}
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {showMarkReady ? (
-                    <div className="orders-card-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary orders-card-action"
-                        disabled={actionDisabled}
-                        onClick={() => handleMarkReady(o)}
-                      >
-                        {busyOrderId === o.id ? 'Updating…' : 'Mark ready'}
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {showReadyActions ? (
-                    <div className="orders-card-actions orders-card-actions--split">
-                      <button
-                        type="button"
-                        className="btn btn-ghost orders-card-action"
-                        disabled={actionDisabled}
-                        onClick={() => handleSendWhatsAppReady(o)}
-                      >
-                        Send WhatsApp
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary orders-card-action"
-                        disabled={actionDisabled}
-                        onClick={() => handleMarkComplete(o.id)}
-                      >
-                        {busyOrderId === o.id ? 'Updating…' : 'Mark completed'}
-                      </button>
-                    </div>
-                  ) : null}
-                </article>
-              </li>
-            );
-          })}
+        <ul className="orders-pos-grid">
+          {filtered.map((o) => (
+            <li key={o.id}>
+              <OrderPosTile order={o} onSelect={() => setSelectedOrderId(o.id)} />
+            </li>
+          ))}
         </ul>
       )}
 
       <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
+
+      {quickOpen ? (
+        <div className="orders-quick-overlay" role="presentation">
+          <button
+            type="button"
+            className="orders-quick-overlay__backdrop"
+            aria-label="Close quick order"
+            onClick={closeQuick}
+          />
+          <div
+            className="orders-quick-sheet card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="orders-quick-title"
+          >
+            <div className="orders-quick-sheet__head">
+              <h2 id="orders-quick-title" style={{ margin: 0, fontSize: '1.1rem' }}>
+                Quick order
+              </h2>
+              <button type="button" className="btn btn-ghost" onClick={closeQuick} aria-label="Close">
+                ✕
+              </button>
+            </div>
+            <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.875rem' }}>
+              Creates a walk-in order in <strong>Preparing</strong> (skips New).
+            </p>
+            {demoReadOnly ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Sign in to create real quick orders. Demo mode is read-only.
+              </p>
+            ) : (
+              <form className="orders-quick-form stack" onSubmit={handleQuickOrder}>
+                <div className="orders-quick-row">
+                  <label className="orders-quick-field">
+                    <span className="orders-quick-label">Buyer name</span>
+                    <input
+                      className="input"
+                      value={quickBuyerName}
+                      onChange={(ev) => setQuickBuyerName(ev.target.value)}
+                      autoComplete="name"
+                      required
+                    />
+                  </label>
+                  <label className="orders-quick-field">
+                    <span className="orders-quick-label">Phone</span>
+                    <input
+                      className="input"
+                      type="tel"
+                      value={quickBuyerPhone}
+                      onChange={(ev) => setQuickBuyerPhone(ev.target.value)}
+                      autoComplete="tel"
+                      required
+                    />
+                  </label>
+                </div>
+                <div className="orders-quick-row">
+                  <label className="orders-quick-field orders-quick-field--grow">
+                    <span className="orders-quick-label">Address (optional)</span>
+                    <input
+                      className="input"
+                      value={quickAddress}
+                      onChange={(ev) => setQuickAddress(ev.target.value)}
+                      placeholder="Delivery / pickup notes"
+                    />
+                  </label>
+                </div>
+                <div className="stack" style={{ gap: '0.65rem' }}>
+                  <span className="orders-quick-label">Menu items</span>
+                  {quickLines.map((line, idx) => (
+                    <div className="orders-quick-row" key={`ql-${idx}`}>
+                      <label className="orders-quick-field orders-quick-field--grow">
+                        <span className="sr-only">Product</span>
+                        <select
+                          className="input"
+                          value={line.productId}
+                          onChange={(ev) => updateQuickLine(idx, { productId: ev.target.value })}
+                          required={idx === 0}
+                        >
+                          <option value="">Select product…</option>
+                          {productRows.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {String(p.name ?? p.title ?? p.id)} — ₹{Number(p.price ?? 0)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="orders-quick-field">
+                        <span className="sr-only">Qty</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={line.qty}
+                          onChange={(ev) => updateQuickLine(idx, { qty: ev.target.value })}
+                          aria-label="Quantity"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => removeQuickLine(idx)}
+                        disabled={quickLines.length <= 1}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" className="btn btn-ghost" onClick={addQuickLine}>
+                    + Add line
+                  </button>
+                </div>
+                <div className="orders-quick-row">
+                  <label className="orders-quick-field">
+                    <span className="orders-quick-label">Total (₹)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={quickTotal}
+                      onChange={(ev) => setQuickTotal(ev.target.value)}
+                      placeholder="Leave 0 to auto-sum lines"
+                    />
+                  </label>
+                  <label className="orders-quick-field">
+                    <span className="orders-quick-label">Payment</span>
+                    <select
+                      className="input"
+                      value={quickPayment}
+                      onChange={(ev) => setQuickPayment(ev.target.value)}
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="upi">UPI</option>
+                    </select>
+                  </label>
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={quickBusy}>
+                  {quickBusy ? 'Saving…' : 'Save quick order'}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedOrder && seller ? (
+        <OrderDetailsModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrderId(null)}
+          actions={
+            orderHasModalActions(selectedOrder, tab) ? (
+              <OrderModalActions
+                order={selectedOrder}
+                tab={tab}
+                busyOrderId={busyOrderId}
+                demoReadOnly={demoReadOnly}
+                acceptByOrder={acceptByOrder}
+                setAcceptByOrder={setAcceptByOrder}
+                onConfirm={handleConfirmOrder}
+                onCancel={handleCancelOrder}
+                onStartPreparing={handleStartPreparing}
+                onMarkReady={handleMarkReady}
+                onMarkComplete={handleMarkComplete}
+                onWhatsAppReady={handleSendWhatsAppReady}
+              />
+            ) : null
+          }
+        />
+      ) : null}
     </div>
   );
 }

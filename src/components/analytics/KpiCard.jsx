@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { formatInr, formatPct } from '../../utils/analyticsMath';
 import { Sparkline } from './Sparkline';
 
@@ -12,7 +13,7 @@ import { Sparkline } from './Sparkline';
  * @param {number[]} [props.sparkPrevious]
  * @param {boolean} [props.isPoints]
  */
-export function KpiCard({
+export const KpiCard = memo(function KpiCard({
   title,
   tag,
   currentDisplay,
@@ -51,4 +52,4 @@ export function KpiCard({
       )}
     </article>
   );
-}
+});

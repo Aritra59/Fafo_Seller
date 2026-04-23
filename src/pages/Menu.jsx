@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
 import {
   createCombo,
+  deleteProduct,
   getCuisineCategoryLabel,
   recomputeSellerSlotCount,
   subscribeCombosBySellerId,
@@ -19,9 +21,10 @@ import {
 } from '../services/storage';
 
 const TABS = [
-  { id: 'items', label: 'Items' },
+  { id: 'items', label: 'Products' },
   { id: 'combos', label: 'Combos' },
-  { id: 'menu', label: 'Menu' },
+  { id: 'categories', label: 'Categories' },
+  { id: 'discounts', label: 'Discounts' },
 ];
 
 function normalizeTags(raw) {
@@ -125,10 +128,42 @@ function groupProductsByCuisine(products) {
   return sections;
 }
 
+/** @param {string[]} orderedPreferred @param {string[]} discovered */
+function mergeCategoryOrder(orderedPreferred, discovered) {
+  const pref = Array.isArray(orderedPreferred) ? orderedPreferred.filter(Boolean) : [];
+  const disc = Array.isArray(discovered) ? [...discovered] : [];
+  const out = [];
+  const seen = new Set();
+  for (const p of pref) {
+    if (!disc.includes(p)) continue;
+    if (seen.has(p)) continue;
+    out.push(p);
+    seen.add(p);
+  }
+  disc.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  for (const d of disc) {
+    if (seen.has(d)) continue;
+    out.push(d);
+    seen.add(d);
+  }
+  return out;
+}
+
+function sortSectionsByOrder(sections, orderArr) {
+  if (!Array.isArray(orderArr) || orderArr.length === 0) return sections;
+  const idx = (label) => {
+    const i = orderArr.indexOf(label);
+    return i === -1 ? 500 + label.charCodeAt(0) : i;
+  };
+  return [...sections].sort((a, b) => idx(a.label) - idx(b.label));
+}
+
 export function Menu() {
   const { seller, loading: sellerLoading, error: sellerError } = useSeller();
   const [tab, setTab] = useState('items');
-  const [search, setSearch] = useState('');
+  const [searchRaw, setSearchRaw] = useState('');
+  const search = useDebouncedValue(searchRaw, 320);
+  const [productFilter, setProductFilter] = useState('all');
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState(null);
@@ -143,6 +178,8 @@ export function Menu() {
   const [comboImageFile, setComboImageFile] = useState(null);
   const [comboBusy, setComboBusy] = useState(false);
   const [comboMsg, setComboMsg] = useState('');
+  const [categoryBusy, setCategoryBusy] = useState(false);
+  const [deleteBusyId, setDeleteBusyId] = useState(null);
   const demoReadOnly = isDemoExplorer();
 
   useEffect(() => {
@@ -206,15 +243,86 @@ export function Menu() {
     return m;
   }, [products]);
 
-  const filtered = useMemo(
-    () => products.filter((p) => matchesSearch(p, search)),
-    [products, search],
-  );
+  const filtered = useMemo(() => {
+    let rows = products.filter((p) => matchesSearch(p, search));
+    if (productFilter === 'low') {
+      rows = rows.filter((p) => {
+        const q = Number(p.quantity);
+        return Number.isFinite(q) && q > 0 && q < 5;
+      });
+    } else if (productFilter === 'tagged') {
+      rows = rows.filter((p) => normalizeTags(p.tags).length > 0);
+    }
+    return rows;
+  }, [products, search, productFilter]);
+
+  const allCategoryLabels = useMemo(() => {
+    const s = new Set();
+    for (const p of products) {
+      s.add(getCuisineCategoryLabel(p));
+    }
+    return Array.from(s);
+  }, [products]);
+
+  const categoryOrder = useMemo(() => {
+    const stored =
+      seller?.menuCategoryOrder && Array.isArray(seller.menuCategoryOrder)
+        ? seller.menuCategoryOrder.map(String)
+        : [];
+    return mergeCategoryOrder(stored, allCategoryLabels);
+  }, [seller?.menuCategoryOrder, allCategoryLabels]);
 
   const groupedByCuisine = useMemo(
-    () => groupProductsByCuisine(filtered),
-    [filtered],
+    () => sortSectionsByOrder(groupProductsByCuisine(filtered), categoryOrder),
+    [filtered, categoryOrder],
   );
+
+  const previewGrouped = useMemo(
+    () => sortSectionsByOrder(groupProductsByCuisine(products), categoryOrder),
+    [products, categoryOrder],
+  );
+
+  const persistCategoryOrder = useCallback(
+    async (nextOrder) => {
+      if (!seller?.id || demoReadOnly) return;
+      setCategoryBusy(true);
+      setComboMsg('');
+      try {
+        await updateSellerDocument(seller.id, { menuCategoryOrder: nextOrder });
+        await recomputeSellerSlotCount(seller.id);
+      } catch (e) {
+        setComboMsg(e.message ?? 'Could not save category order.');
+      } finally {
+        setCategoryBusy(false);
+      }
+    },
+    [seller?.id, demoReadOnly],
+  );
+
+  async function handleDeleteProduct(productId) {
+    if (!seller?.id || demoReadOnly) return;
+    if (!window.confirm('Delete this product? This cannot be undone.')) return;
+    setDeleteBusyId(productId);
+    setComboMsg('');
+    try {
+      await deleteProduct(productId, seller.id);
+      await recomputeSellerSlotCount(seller.id);
+    } catch (e) {
+      setComboMsg(e.message ?? 'Could not delete.');
+    } finally {
+      setDeleteBusyId(null);
+    }
+  }
+
+  function moveCategory(label, dir) {
+    const idx = categoryOrder.indexOf(label);
+    if (idx < 0) return;
+    const j = idx + dir;
+    if (j < 0 || j >= categoryOrder.length) return;
+    const next = [...categoryOrder];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    void persistCategoryOrder(next);
+  }
 
   function toggleComboProduct(id) {
     setComboSelectedIds((prev) =>
@@ -376,8 +484,8 @@ export function Menu() {
             className="input menu-page-search-input"
             type="search"
             placeholder="Search name or tags…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchRaw}
+            onChange={(e) => setSearchRaw(e.target.value)}
             autoComplete="off"
           />
         </label>
@@ -438,13 +546,28 @@ export function Menu() {
 
       {tab === 'items' ? (
         <>
-          <div className="menu-page-actions">
-            <button type="button" className="btn btn-ghost" onClick={handleAddFromMaster}>
-              Add from master list
-            </button>
-            <Link to="/menu/add" className="btn btn-primary">
-              Add custom item
-            </Link>
+          <div className="menu-page-actions menu-page-actions--wrap">
+            <div className="menu-product-filters" role="group" aria-label="Filter products">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'low', label: 'Low stock' },
+                { id: 'tagged', label: 'Tagged' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  className={`menu-filter-pill${productFilter === f.id ? ' menu-filter-pill--active' : ''}`}
+                  onClick={() => setProductFilter(f.id)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="menu-page-actions__btns">
+              <button type="button" className="btn btn-ghost" onClick={handleAddFromMaster}>
+                Add from master list
+              </button>
+            </div>
           </div>
 
           {productsError ? (
@@ -461,8 +584,8 @@ export function Menu() {
             <div className="card menu-page-empty">
               <p className="muted" style={{ margin: 0 }}>
                 {search.trim()
-                  ? 'No items match your search.'
-                  : 'No products yet. Add items in Firestore or use the buttons above.'}
+                  ? 'No items match your search or filter.'
+                  : 'No products yet. Add items in Firestore or use Add product.'}
               </p>
             </div>
           ) : (
@@ -471,13 +594,13 @@ export function Menu() {
                 <section
                   key={section.key}
                   className="menu-page-cuisine-block"
-                  aria-label={`Cuisine: ${section.label}`}
+                  aria-label={`Category: ${section.label}`}
                 >
                   <h2 className="menu-page-cuisine-heading">
-                    <span className="menu-page-cuisine-prefix">Cuisine category:</span>
+                    <span className="menu-page-cuisine-prefix">Category</span>
                     <span className="menu-page-cuisine-name">{section.label}</span>
                   </h2>
-                  <ul className="menu-page-list">
+                  <ul className="menu-admin-product-grid">
                     {section.items.map((p) => {
                       const tags = normalizeTags(p.tags);
                       const price = productPrice(p);
@@ -487,12 +610,18 @@ export function Menu() {
                           : typeof p.image === 'string' && p.image.trim()
                             ? p.image.trim()
                             : '';
+                      const qty = Number(p.quantity);
+                      const stockOk = Number.isFinite(qty);
+                      const prep =
+                        typeof p.prepTime === 'string' && p.prepTime.trim()
+                          ? p.prepTime.trim()
+                          : '—';
 
                       return (
                         <li key={p.id}>
-                          <article className="menu-item-card card">
+                          <article className="menu-admin-product-card card">
                             <div
-                              className="menu-item-card-media"
+                              className="menu-admin-product-card__media"
                               aria-hidden={img ? undefined : true}
                             >
                               {img ? (
@@ -501,36 +630,50 @@ export function Menu() {
                                 <span className="menu-item-card-placeholder">No image</span>
                               )}
                             </div>
-                            <div className="menu-item-card-body">
-                              <div className="menu-item-card-top">
+                            <div className="menu-admin-product-card__body">
+                              <div className="menu-admin-product-card__top">
                                 <h3 className="menu-item-card-name">{productName(p)}</h3>
                                 <p className="menu-item-card-price">{formatPrice(price)}</p>
                               </div>
+                              <dl className="menu-admin-product-card__meta">
+                                <div>
+                                  <dt>Stock</dt>
+                                  <dd>{stockOk ? String(Math.max(0, Math.floor(qty))) : '—'}</dd>
+                                </div>
+                                <div>
+                                  <dt>Prep</dt>
+                                  <dd>{prep}</dd>
+                                </div>
+                              </dl>
                               {discountLine(p) ? (
                                 <p className="menu-item-card-discount" style={{ margin: '0.25rem 0 0' }}>
                                   {discountLine(p)}
                                 </p>
                               ) : null}
                               {tags.length > 0 ? (
-                                <ul className="menu-item-card-tags">
+                                <ul className="menu-item-card-tags menu-admin-product-card__tags">
                                   {tags.map((tag, i) => (
                                     <li key={`${tag}-${i}`}>{tag}</li>
                                   ))}
                                 </ul>
                               ) : (
-                                <p
-                                  className="muted menu-item-card-no-tags"
-                                  style={{ margin: 0 }}
-                                >
+                                <p className="muted menu-item-card-no-tags" style={{ margin: 0 }}>
                                   No tags
                                 </p>
                               )}
-                              <Link
-                                to={`/menu/edit/${p.id}`}
-                                className="btn btn-ghost menu-item-card-edit"
-                              >
-                                Edit
-                              </Link>
+                              <div className="menu-admin-product-card__actions">
+                                <Link to={`/menu/edit/${p.id}`} className="btn btn-ghost btn--sm">
+                                  Edit
+                                </Link>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn--sm menu-admin-product-card__del"
+                                  disabled={demoReadOnly || deleteBusyId === p.id}
+                                  onClick={() => void handleDeleteProduct(p.id)}
+                                >
+                                  {deleteBusyId === p.id ? '…' : 'Delete'}
+                                </button>
+                              </div>
                             </div>
                           </article>
                         </li>
@@ -696,10 +839,49 @@ export function Menu() {
         </div>
       ) : null}
 
-      {tab === 'menu' ? (
+      {tab === 'categories' ? (
         <div className="menu-full-preview stack">
+          <section className="card stack" aria-label="Category order">
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Category chips (order)</h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Order matches how cuisine categories appear to buyers. Use arrows to move a category
+              up or down.
+            </p>
+            {categoryBusy ? (
+              <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+                Saving order…
+              </p>
+            ) : null}
+            <ul className="menu-category-chip-list">
+              {categoryOrder.map((label) => (
+                <li key={label} className="menu-category-chip-row">
+                  <span className="menu-category-chip-name">{label}</span>
+                  <span className="menu-category-chip-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn--sm"
+                      disabled={demoReadOnly || categoryBusy}
+                      onClick={() => moveCategory(label, -1)}
+                      aria-label={`Move ${label} up`}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn--sm"
+                      disabled={demoReadOnly || categoryBusy}
+                      onClick={() => moveCategory(label, 1)}
+                      aria-label={`Move ${label} down`}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
           <section className="card stack" aria-label="Menu sections">
-            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Menu sections</h2>
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Buyer menu sections</h2>
             <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
               Enable Breakfast / Lunch / Dinner for slot counts and buyer layout. Names should
               match your product &quot;Menu category&quot; where possible.
@@ -725,22 +907,13 @@ export function Menu() {
               })}
             </div>
           </section>
-          {globalDiscountText || globalDiscountPct != null ? (
-            <div className="menu-full-hero card">
-              <p style={{ margin: 0, fontWeight: 700 }}>Today at {seller.shopName ?? 'your shop'}</p>
-              <p className="muted" style={{ margin: '0.35rem 0 0' }}>
-                {globalDiscountText}
-                {globalDiscountPct != null ? ` · Up to ${globalDiscountPct}% off` : null}
-              </p>
-            </div>
-          ) : null}
           {productsLoading ? (
             <p className="muted" style={{ margin: 0 }}>
-              Loading menu…
+              Loading preview…
             </p>
           ) : (
             <>
-              {groupedByCuisine.map((section) => (
+              {previewGrouped.map((section) => (
                 <section key={section.key} className="card menu-full-section" aria-label={section.label}>
                   <h2 className="menu-page-cuisine-heading">
                     <span className="menu-page-cuisine-name">{section.label}</span>
@@ -786,6 +959,86 @@ export function Menu() {
           )}
         </div>
       ) : null}
+
+      {tab === 'discounts' ? (
+        <div className="stack menu-discounts-page">
+          <section className="card stack">
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Shop-wide</h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Edit headline offers under <Link to="/settings">Settings → Shop profile</Link>.
+            </p>
+            {globalDiscountText || globalDiscountPct != null ? (
+              <ul className="menu-discount-type-list">
+                {globalDiscountPct != null ? (
+                  <li>
+                    <strong>% off</strong> — {globalDiscountPct}% on eligible items
+                  </li>
+                ) : null}
+                {globalDiscountText ? (
+                  <li>
+                    <strong>Promo copy</strong> — {globalDiscountText}
+                    {/buy\s*\d|get\s*\d|bogo/i.test(globalDiscountText) ? (
+                      <span className="muted"> (interpret as Buy X Get Y style messaging)</span>
+                    ) : null}
+                  </li>
+                ) : null}
+              </ul>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                No shop-wide discount set.
+              </p>
+            )}
+          </section>
+          <section className="card stack">
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Per product</h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Use <strong>% off</strong> and <strong>offer label</strong> on each item (flat ₹ off and Buy X
+              Get Y phrasing live in the label field today).
+            </p>
+            <ul className="menu-discount-product-list">
+              {products
+                .filter((p) => discountLine(p))
+                .map((p) => (
+                  <li key={p.id} className="menu-discount-product-row">
+                    <span className="menu-discount-product-name">{productName(p)}</span>
+                    <span className="muted menu-discount-product-line">{discountLine(p)}</span>
+                    <Link to={`/menu/edit/${p.id}`} className="btn btn-ghost btn--sm">
+                      Edit
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+            {products.every((p) => !discountLine(p)) ? (
+              <p className="muted" style={{ margin: 0 }}>
+                No per-item discounts yet.
+              </p>
+            ) : null}
+          </section>
+          <section className="card stack">
+            <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Combos</h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Combo pricing bundles products; optional % off and offer label on the Combos tab.
+            </p>
+            <ul className="menu-discount-product-list">
+              {combos.filter((c) => comboDiscountLine(c)).map((c) => (
+                <li key={c.id} className="menu-discount-product-row">
+                  <span className="menu-discount-product-name">{comboTitle(c)}</span>
+                  <span className="muted">{comboDiscountLine(c)}</span>
+                </li>
+              ))}
+            </ul>
+            {combos.every((c) => !comboDiscountLine(c)) ? (
+              <p className="muted" style={{ margin: 0 }}>
+                No combo discounts yet.
+              </p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      <Link to="/menu/add" className="menu-add-fab btn btn-primary" aria-label="Add product">
+        + Add product
+      </Link>
 
       <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>

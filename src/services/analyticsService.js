@@ -3,6 +3,32 @@ import { getOrderTimeMsForAnalytics } from '../utils/analyticsTime';
 import { pctChange, safeDiv } from '../utils/analyticsMath';
 
 /**
+ * ---------------------------------------------------------------------------
+ * ANALYTICS ARCHITECTURE (seller Insights / Analytics)
+ * ---------------------------------------------------------------------------
+ * **Current analytics is rule-based deterministic logic, not an AI model.**
+ * There is no LLM/ML inference: metrics and copy are computed from Firestore
+ * snapshots in this module plus composition in `AnalyticsPage.jsx`.
+ *
+ * **Firebase collections used**
+ * - `orders` (by `sellerId`) — time windows, revenue sums, order counts, buyer
+ *   phones, repeat/segment logic, sparkline buckets.
+ * - `products` — menu/category filters and menu revenue attribution from line items.
+ * - `users` — enrich buyer labels from stored phone/name when present.
+ *
+ * **AOV** — `computeKpiBundle`: `safeDiv(totalRevenue, orderCount)` using numeric
+ * `order.total` for orders whose status is in `VALID_COUNT_STATUSES`.
+ *
+ * **Repeat rate** — `repeatRatePercent`: among distinct buyer phones appearing in
+ * the period with valid orders, share where `buildLifetimeOrderCountsByPhone` count > 1.
+ *
+ * **Momentum / nudges** — `buildInsightLines`, `buildGrowthCardLines`: fixed thresholds
+ * on KPI deltas (e.g. AOV % change, repeat rate) produce suggestion strings — templated
+ * heuristics only.
+ * ---------------------------------------------------------------------------
+ */
+
+/**
  * Order statuses that count toward revenue & volume (excludes cancelled / rejected / refunded).
  * Includes "new" so newly placed (not yet kitchen) orders still show in period totals.
  */

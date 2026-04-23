@@ -1,24 +1,40 @@
 import { normalizeShopCode } from './shopCode';
 
-const DEFAULT_BUYER_PROD = 'https://buyer.yourdomain.com';
-const DEFAULT_BUYER_DEV = 'http://localhost:3000';
+/** Live buyer storefront when no env override is set. */
+export const BUYER_STOREFRONT_DEFAULT = 'https://fafo-buyer.vercel.app';
 
 /**
- * Base URL of the **buyer** storefront (separate from this seller dashboard).
- * - Set `VITE_BUYER_STOREFRONT_BASE` or `VITE_BUYER_PUBLIC_BASE` in .env
- * - Dev: defaults to `http://localhost:3000`
- * - Prod: defaults to `https://buyer.yourdomain.com` (set env to your real buyer host)
+ * Returns true if the URL clearly points at an old dev / placeholder buyer host.
+ * @param {unknown} url
+ * @returns {boolean}
+ */
+export function isLegacyBuyerStorefrontUrl(url) {
+  const s = String(url ?? '').trim().toLowerCase();
+  if (!s.startsWith('http')) return false;
+  return (
+    s.includes('localhost') ||
+    s.includes('127.0.0.1') ||
+    s.includes('yourdomain.com') ||
+    s.includes('buyer.yourdomain.com')
+  );
+}
+
+/**
+ * Base URL of the buyer storefront (separate from this seller app).
+ * Priority: `VITE_BUYER_PUBLIC_BASE` → `VITE_BUYER_STOREFRONT_BASE` → {@link BUYER_STOREFRONT_DEFAULT}.
+ * Trailing slashes are stripped.
  * @returns {string}
  */
 export function getBuyerPublicBase() {
-  const b = import.meta.env.VITE_BUYER_STOREFRONT_BASE || import.meta.env.VITE_BUYER_PUBLIC_BASE;
-  if (typeof b === 'string' && b.trim()) {
-    return b.replace(/\/$/, '');
+  const fromPublic = import.meta.env.VITE_BUYER_PUBLIC_BASE;
+  const fromLegacy = import.meta.env.VITE_BUYER_STOREFRONT_BASE;
+  const raw =
+    (typeof fromPublic === 'string' && fromPublic.trim() ? fromPublic : '') ||
+    (typeof fromLegacy === 'string' && fromLegacy.trim() ? fromLegacy : '');
+  if (raw) {
+    return raw.replace(/\/$/, '');
   }
-  if (import.meta.env.DEV) {
-    return DEFAULT_BUYER_DEV;
-  }
-  return DEFAULT_BUYER_PROD;
+  return BUYER_STOREFRONT_DEFAULT;
 }
 
 /**
@@ -58,7 +74,7 @@ export function publicShopBySlugUrl(slug) {
 }
 
 /**
- * QR: buyer storefront URL only (no `src` query) — “full buyer experience” in buyer app.
+ * QR: same URL as {@link publicShopByCodeUrl} (no `src` query).
  * @param {string} code
  */
 export function publicShopQrTargetUrl(code) {

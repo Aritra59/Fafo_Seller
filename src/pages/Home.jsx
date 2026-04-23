@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { NomadLogo } from '../components/NomadLogo';
@@ -6,6 +7,22 @@ import { resolvePostLoginPath } from '../services/postLoginRedirect';
 export function Home() {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading || !user) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const path = await resolvePostLoginPath(user);
+        if (!cancelled) navigate(path, { replace: true });
+      } catch {
+        if (!cancelled) navigate('/dashboard', { replace: true });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, loading, navigate]);
 
   function handleExploreDemo() {
     sessionStorage.setItem('fafo_demo', '1');
@@ -32,6 +49,18 @@ export function Home() {
     );
   }
 
+  if (user) {
+    return (
+      <div className="landing">
+        <div className="landing-inner">
+          <p className="landing-muted" style={{ margin: 0 }}>
+            Opening your workspace…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="landing">
       <div className="landing-inner">
@@ -44,23 +73,6 @@ export function Home() {
           <p className="landing-tagline">
             App for Street Food Vendors &amp; Small Kiosks
           </p>
-          {user ? (
-            <p className="landing-signed-in">
-              Signed in as{' '}
-              <strong>{user.phoneNumber ?? user.uid}</strong>
-              {' · '}
-              <button
-                type="button"
-                className="landing-link-btn"
-                onClick={async () => {
-                  const path = await resolvePostLoginPath(user);
-                  navigate(path);
-                }}
-              >
-                Continue
-              </button>
-            </p>
-          ) : null}
         </header>
 
         <section className="landing-cta-row" aria-label="Get started">

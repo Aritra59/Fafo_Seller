@@ -167,6 +167,10 @@ export function CustomerDetails() {
   }, [profile]);
 
   const since = profile ? formatMonthYear(profile.firstOrderMs) : '—';
+  const aov =
+    profile && profile.totalOrders > 0
+      ? profile.totalSpent / profile.totalOrders
+      : 0;
   const initial = profile
     ? String(profile.name || 'C')
         .trim()
@@ -285,6 +289,10 @@ export function CustomerDetails() {
             <dt>Last order</dt>
             <dd>{formatDateTime(profile.lastOrderMs)}</dd>
           </div>
+          <div>
+            <dt>Avg order</dt>
+            <dd>{profile.totalOrders > 0 ? formatRupee(aov) : '—'}</dd>
+          </div>
         </dl>
 
         <div className="customer-detail-actions">
@@ -309,7 +317,7 @@ export function CustomerDetails() {
         <h2 id="cust-orders-title" className="customer-detail-history__title">
           Order history
         </h2>
-        <ul className="order-mini-grid">
+        <ul className="order-mini-grid order-mini-grid--square">
           {customerOrders.map((o) => (
             <li key={o.id}>
               <OrderMiniCard order={o} />

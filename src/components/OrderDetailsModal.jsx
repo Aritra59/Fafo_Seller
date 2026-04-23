@@ -67,7 +67,11 @@ function buyerDisplayName(order) {
   return '';
 }
 
-export function OrderDetailsModal({ order, onClose }) {
+/**
+ * @param {object} props
+ * @param {import('react').ReactNode} [props.actions] Seller workflow controls (confirm, ready, etc.)
+ */
+export function OrderDetailsModal({ order, onClose, actions = null }) {
   if (!order) return null;
 
   const lines = normalizeLineItems(order);
@@ -103,6 +107,16 @@ export function OrderDetailsModal({ order, onClose }) {
             <p className="order-detail-sheet__eyebrow">Order ID</p>
             <p className="order-detail-sheet__id" title={order.id}>
               {order.id}
+            </p>
+            <p style={{ margin: '0.35rem 0 0' }}>
+              <Link
+                to={`/orders/${encodeURIComponent(order.id)}`}
+                className="muted"
+                style={{ fontSize: '0.8125rem' }}
+                onClick={onClose}
+              >
+                Open full page →
+              </Link>
             </p>
           </div>
           <button type="button" className="btn btn-ghost order-detail-sheet__close" onClick={onClose}>
@@ -161,6 +175,12 @@ export function OrderDetailsModal({ order, onClose }) {
             </li>
           </ul>
         </section>
+
+        {actions ? (
+          <section className="order-detail-sheet__block" aria-label="Order actions">
+            {actions}
+          </section>
+        ) : null}
 
         <dl className="order-detail-meta">
           <div>

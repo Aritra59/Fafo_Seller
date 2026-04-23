@@ -26,7 +26,11 @@ import {
 import { readPersistedSellerId } from '../constants/session';
 import { db } from '../firebase';
 import { normalizeShopCode } from '../utils/shopCode';
-import { publicShopByCodeUrl, publicShopQrTargetUrl } from '../utils/publicShopUrl';
+import {
+  isLegacyBuyerStorefrontUrl,
+  publicShopByCodeUrl,
+  publicShopQrTargetUrl,
+} from '../utils/publicShopUrl';
 import { buildPublicShopQrPngBlob } from '../utils/shopQr';
 import { uploadPublicShopQrPng } from './storage';
 
@@ -373,7 +377,10 @@ export async function ensureSellerPublicAccess(sellerId) {
     }
     const byCode = publicShopByCodeUrl(code);
     const initialUrl = d.publicShopUrl || d.shopUrl;
-    const publicUrlChanged = String(initialUrl ?? '') !== byCode;
+    const legacyHost =
+      isLegacyBuyerStorefrontUrl(d.publicShopUrl) || isLegacyBuyerStorefrontUrl(d.shopUrl);
+    const publicUrlChanged =
+      String(initialUrl ?? '').trim() !== byCode || legacyHost;
     let shopSlug = typeof d.shopSlug === 'string' && d.shopSlug.trim()
       ? d.shopSlug.trim().toLowerCase()
       : '';
