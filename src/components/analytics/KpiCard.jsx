@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { formatInr, formatPct } from '../../utils/analyticsMath';
+import { formatPct } from '../../utils/analyticsMath';
 import { Sparkline } from './Sparkline';
 
 /**
@@ -23,7 +23,8 @@ export const KpiCard = memo(function KpiCard({
   sparkPrevious = [],
   isPoints = false,
 }) {
-  const positive = pct == null || pct >= 0;
+  const tone =
+    pct == null || !Number.isFinite(pct) ? 'flat' : pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
   return (
     <article className="analytics-kpi-card">
       <div className="analytics-kpi-card-head">
@@ -43,7 +44,13 @@ export const KpiCard = memo(function KpiCard({
       </div>
       {pct != null && Number.isFinite(pct) ? (
         <div
-          className={`analytics-kpi-delta${positive ? ' analytics-kpi-delta--up' : ' analytics-kpi-delta--down'}`}
+          className={`analytics-kpi-delta${
+            tone === 'up'
+              ? ' analytics-kpi-delta--up'
+              : tone === 'down'
+                ? ' analytics-kpi-delta--down'
+                : ' analytics-kpi-delta--flat'
+          }`}
         >
           {formatPct(pct, { points: isPoints })}
         </div>

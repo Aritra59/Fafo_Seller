@@ -30,8 +30,6 @@ export function ShopOnboarding() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [phoneDigits, setPhoneDigits] = useState('');
-  const [shopLoginPassword, setShopLoginPassword] = useState('');
-  const [shopLoginPassword2, setShopLoginPassword2] = useState('');
   const [pendingLogo, setPendingLogo] = useState(null);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
   const [logoUploadPct, setLogoUploadPct] = useState(0);
@@ -49,15 +47,11 @@ export function ShopOnboarding() {
     if (authLoading || !user) {
       return undefined;
     }
-    if (user.isAnonymous) {
-      navigate('/dashboard', { replace: true });
-      return undefined;
-    }
-    const phone = user.phoneNumber;
 
     let cancelled = false;
     (async () => {
       try {
+        const phone = user.phoneNumber;
         if (phone) {
           const seller = await getSellerByPhone(phone);
           if (!cancelled && seller) {
@@ -72,8 +66,14 @@ export function ShopOnboarding() {
             return;
           }
         }
-      } catch (e) {
-        console.error('[ShopOnboarding] seller check failed', e);
+        if (user.isAnonymous) {
+          if (!cancelled) {
+            navigate('/login?need=shop', { replace: true });
+          }
+          return;
+        }
+      } catch {
+        // ignore
       } finally {
         if (!cancelled) {
           setChecking(false);
@@ -104,16 +104,6 @@ export function ShopOnboarding() {
       setError('Enter a valid 10 digit mobile number.');
       return;
     }
-    const pwd = shopLoginPassword.trim();
-    const pwd2 = shopLoginPassword2.trim();
-    if (pwd.length < 6) {
-      setError('Shop login password must be at least 6 characters.');
-      return;
-    }
-    if (pwd !== pwd2) {
-      setError('Shop login passwords do not match.');
-      return;
-    }
     setBusy(true);
     setLogoUploadPct(0);
     try {
@@ -125,7 +115,6 @@ export function ShopOnboarding() {
         lat,
         lng,
         address,
-        shopLoginPassword: pwd,
       });
       if (pendingLogo) {
         const blob = await compressImageToJpegBlob(pendingLogo);
@@ -298,44 +287,11 @@ export function ShopOnboarding() {
         />
       </div>
 
-      <div className="stack" style={{ gap: '0.65rem' }}>
-        <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-          A unique <strong>shop code</strong> is created from your shop name (e.g. FA4821). Use the
-          password below to sign in with shop code anytime.
-        </p>
-        <div>
-          <label className="label" htmlFor="onb-shop-pw">
-            Shop code login password
-          </label>
-          <input
-            id="onb-shop-pw"
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={shopLoginPassword}
-            onChange={(ev) => setShopLoginPassword(ev.target.value)}
-            placeholder="At least 6 characters"
-            minLength={6}
-            required
-          />
-        </div>
-        <div>
-          <label className="label" htmlFor="onb-shop-pw2">
-            Confirm password
-          </label>
-          <input
-            id="onb-shop-pw2"
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={shopLoginPassword2}
-            onChange={(ev) => setShopLoginPassword2(ev.target.value)}
-            placeholder="Re-enter password"
-            minLength={6}
-            required
-          />
-        </div>
-      </div>
+      <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+        A unique <strong>shop code</strong> is created for your shop. If your business was set up for
+        you already, use <strong>phone or shop code</strong> on the login page — you will skip this
+        step.
+      </p>
 
       {error ? <p className="error">{error}</p> : null}
 

@@ -17,6 +17,7 @@ import { CustomerDetails } from './pages/CustomerDetails';
 import { OrderDetailPage } from './pages/OrderDetailPage';
 import { Settings } from './pages/Settings';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { MenuManagement } from './pages/MenuManagement';
 
 export default function App() {
   return (
@@ -81,6 +82,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Menu />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="menu/groups"
+            element={
+              <ProtectedRoute>
+                <MenuManagement />
               </ProtectedRoute>
             }
           />

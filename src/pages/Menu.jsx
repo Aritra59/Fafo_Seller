@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
@@ -13,17 +13,20 @@ import {
   updateComboForSeller,
   updateSellerDocument,
   UNCATEGORIZED_CUISINE,
+  patchProductFields,
 } from '../services/firestore';
 import {
   compressImageToJpegBlob,
   isAcceptedImageType,
   uploadComboImageJpeg,
 } from '../services/storage';
+import { MenuGroupsPanel } from '../components/menu/MenuGroupsPanel';
 
 const TABS = [
   { id: 'items', label: 'Products' },
   { id: 'combos', label: 'Combos' },
   { id: 'categories', label: 'Categories' },
+  { id: 'menugroups', label: 'Menu groups' },
   { id: 'discounts', label: 'Discounts' },
 ];
 
@@ -160,6 +163,7 @@ function sortSectionsByOrder(sections, orderArr) {
 
 export function Menu() {
   const { seller, loading: sellerLoading, error: sellerError } = useSeller();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState('items');
   const [searchRaw, setSearchRaw] = useState('');
   const search = useDebouncedValue(searchRaw, 320);
@@ -180,7 +184,24 @@ export function Menu() {
   const [comboMsg, setComboMsg] = useState('');
   const [categoryBusy, setCategoryBusy] = useState(false);
   const [deleteBusyId, setDeleteBusyId] = useState(null);
+  const [availBusyId, setAvailBusyId] = useState(null);
   const demoReadOnly = isDemoExplorer();
+
+  const tabParam = searchParams.get('tab');
+  useEffect(() => {
+    if (tabParam && TABS.some((t) => t.id === tabParam)) {
+      setTab(tabParam);
+    }
+  }, [tabParam]);
+
+  function goTab(next) {
+    setTab(next);
+    if (next === 'items') {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams({ tab: next }, { replace: true });
+    }
+  }
 
   useEffect(() => {
     if (!seller?.id) {
@@ -298,6 +319,21 @@ export function Menu() {
     },
     [seller?.id, demoReadOnly],
   );
+
+  async function toggleProductAvailable(p) {
+    if (!seller?.id || demoReadOnly) return;
+    const id = p.id;
+    const listed = p.available !== false;
+    setAvailBusyId(id);
+    setComboMsg('');
+    try {
+      await patchProductFields(id, seller.id, { available: !listed });
+    } catch (e) {
+      setComboMsg(e?.message ?? 'Could not update availability.');
+    } finally {
+      setAvailBusyId(null);
+    }
+  }
 
   async function handleDeleteProduct(productId) {
     if (!seller?.id || demoReadOnly) return;
@@ -455,10 +491,14 @@ export function Menu() {
 
   return (
     <div className="menu-page">
-      <header className="menu-page-header">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          Menu
-        </h1>
+      <header
+        className="menu-page-header"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
+      >
+        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>Menu</h1>
+        <Link to="/menu?tab=menugroups" className="btn btn-ghost btn--sm" style={{ flexShrink: 0 }}>
+          Menu groups
+        </Link>
       </header>
 
       <div className="menu-page-search-row">
@@ -522,7 +562,7 @@ export function Menu() {
             role="tab"
             aria-selected={tab === t.id}
             className={`menu-page-tab${tab === t.id ? ' menu-page-tab--active' : ''}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => goTab(t.id)}
           >
             {t.label}
           </button>
@@ -616,6 +656,7 @@ export function Menu() {
                         typeof p.prepTime === 'string' && p.prepTime.trim()
                           ? p.prepTime.trim()
                           : '—';
+                      const listed = p.available !== false;
 
                       return (
                         <li key={p.id}>
@@ -645,6 +686,33 @@ export function Menu() {
                                   <dd>{prep}</dd>
                                 </div>
                               </dl>
+                              <div className="menu-admin-avail-row">
+                                <div className="menu-admin-avail-badges" aria-live="polite">
+                                  {!listed ? (
+                                    <span className="menu-avail-badge menu-avail-badge--off">Off menu</span>
+                                  ) : null}
+                                  {stockOk && Math.floor(qty) <= 0 ? (
+                                    <span className="menu-avail-badge">Out of stock</span>
+                                  ) : null}
+                                </div>
+                                <label className="menu-avail-toggle">
+                                  <input
+                                    type="checkbox"
+                                    role="switch"
+                                    className="menu-avail-toggle__input"
+                                    checked={listed}
+                                    onChange={() => void toggleProductAvailable(p)}
+                                    disabled={demoReadOnly || availBusyId === p.id}
+                                    aria-label={
+                                      listed ? 'Turn off menu; buyers will see unavailable' : 'Turn on menu'
+                                    }
+                                  />
+                                  <span className="menu-avail-toggle__ui" aria-hidden />
+                                  <span className="menu-avail-toggle__text">
+                                    {availBusyId === p.id ? '…' : 'On menu'}
+                                  </span>
+                                </label>
+                              </div>
                               {discountLine(p) ? (
                                 <p className="menu-item-card-discount" style={{ margin: '0.25rem 0 0' }}>
                                   {discountLine(p)}
@@ -957,6 +1025,12 @@ export function Menu() {
               ) : null}
             </>
           )}
+        </div>
+      ) : null}
+
+      {tab === 'menugroups' && seller?.id ? (
+        <div className="menu-menugroups-page">
+          <MenuGroupsPanel sellerId={seller.id} products={products} readOnly={demoReadOnly} />
         </div>
       ) : null}
 

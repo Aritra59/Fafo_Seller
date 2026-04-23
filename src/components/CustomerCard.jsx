@@ -1,6 +1,5 @@
 import { memo } from 'react';
 import { Link } from 'react-router-dom';
-import { shortenAddressLabel } from '../services/customerService';
 
 function badgeClass(badge) {
   const b = String(badge ?? 'NEW').toLowerCase();
@@ -15,20 +14,12 @@ function formatRupee(n) {
   return `₹${Number(n ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
-export const CustomerCard = memo(function CustomerCard({ profile, locationLabel }) {
-  const {
-    routeId,
-    name,
-    photoUrl,
-    badge,
-    totalOrders,
-    totalSpent,
-    addressStr,
-  } = profile;
+export const CustomerCard = memo(function CustomerCard({ profile }) {
+  const { routeId, name, photoUrl, badge, totalOrders, totalSpent, displayPhone } = profile;
 
   const initial = String(name || 'C').trim().charAt(0).toUpperCase() || 'C';
   const since = profile.sinceLabel ?? '—';
-  const loc = locationLabel || shortenAddressLabel(addressStr) || '—';
+  const phone = displayPhone || '—';
 
   return (
     <Link to={`/customers/${encodeURIComponent(routeId)}`} className="customer-premium-card">
@@ -51,6 +42,9 @@ export const CustomerCard = memo(function CustomerCard({ profile, locationLabel 
       </div>
 
       <p className="customer-premium-card__name">{name}</p>
+      <p className="customer-premium-card__phone muted" style={{ margin: '0.2rem 0 0', fontSize: '0.85rem' }}>
+        {phone}
+      </p>
 
       <div className="customer-premium-card__stats">
         <span className="customer-premium-card__stat">
@@ -66,10 +60,6 @@ export const CustomerCard = memo(function CustomerCard({ profile, locationLabel 
       </div>
 
       <div className="customer-premium-card__lower">
-        <p className="customer-premium-card__loc">
-          <span className="customer-premium-card__pin" aria-hidden />
-          {loc}
-        </p>
         <p className="customer-premium-card__since">
           <span className="customer-premium-card__cal" aria-hidden />
           <span className="customer-premium-card__since-label">Since:</span>

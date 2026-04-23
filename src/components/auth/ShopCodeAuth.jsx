@@ -1,18 +1,11 @@
-import { signInAnonymously } from 'firebase/auth';
 import { useState } from 'react';
-import { persistSellerId } from '../../constants/session';
-import { persistShopCodeSession } from '../../constants/shopCodeSession';
-import { auth } from '../../firebase';
-import {
-  getSellerByShopCode,
-  normalizeShopCode,
-  sellerPasswordMatches,
-  upsertSellerUser,
-} from '../../services/firestore';
+import { useNavigate } from 'react-router-dom';
+import { persistSellerCodeSessionLocal } from '../../constants/shopCodeLocalSession';
+import { getSellerByShopCode, normalizeShopCode } from '../../services/firestore';
 
-export function ShopCodeAuth({ onSuccess }) {
+export function ShopCodeAuth() {
+  const navigate = useNavigate();
   const [shopCode, setShopCode] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -24,16 +17,12 @@ export function ShopCodeAuth({ onSuccess }) {
       setError('Enter your shop code');
       return;
     }
-    if (!String(password).trim()) {
-      setError('Enter your shop password');
-      return;
-    }
 
     setBusy(true);
     try {
       const seller = await getSellerByShopCode(shopCode);
       if (!seller) {
-        setError('Invalid shop code or password.');
+        setError('Invalid shop code');
         return;
       }
 
@@ -42,34 +31,31 @@ export function ShopCodeAuth({ onSuccess }) {
         return;
       }
 
-      if (!sellerPasswordMatches(seller, password)) {
-        setError('Invalid shop code or password.');
-        return;
-      }
-
-      const cred = await signInAnonymously(auth);
       const phone =
         typeof seller.phone === 'string' && seller.phone.trim()
           ? seller.phone.trim()
           : typeof seller.phoneNumber === 'string' && seller.phoneNumber.trim()
             ? seller.phoneNumber.trim()
             : null;
-      await upsertSellerUser(cred.user.uid, {
-        phone,
-        role: 'seller',
-        shopCode: normalized,
+      const ownerName =
+        typeof seller.ownerName === 'string' && seller.ownerName.trim()
+          ? seller.ownerName.trim()
+          : null;
+      const shopName =
+        typeof seller.shopName === 'string' && seller.shopName.trim()
+          ? seller.shopName.trim()
+          : null;
+
+      persistSellerCodeSessionLocal({
         sellerId: seller.id,
-        authType: 'shopCode',
-      });
-      persistSellerId(seller.id);
-      persistShopCodeSession({
-        sellerId: seller.id,
         shopCode: normalized,
         phone,
+        ownerName,
+        shopName,
       });
-      onSuccess?.(cred.user);
+      navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(err.message ?? 'Could not sign in');
+      setError(err.message ?? 'Could not continue');
     } finally {
       setBusy(false);
     }
@@ -78,7 +64,8 @@ export function ShopCodeAuth({ onSuccess }) {
   return (
     <form className="auth-form stack" onSubmit={handleSubmit}>
       <p className="auth-lead muted" style={{ margin: 0 }}>
-        Sign in with the shop code and password from your admin.
+        Enter the shop code you received. You will open your business dashboard in this browser — no
+        password required.
       </p>
       <div>
         <label className="label" htmlFor="shop-code">
@@ -96,24 +83,9 @@ export function ShopCodeAuth({ onSuccess }) {
           onChange={(ev) => setShopCode(ev.target.value)}
         />
       </div>
-      <div>
-        <label className="label" htmlFor="shop-password">
-          Password
-        </label>
-        <input
-          id="shop-password"
-          className="input auth-input"
-          type="password"
-          name="password"
-          autoComplete="current-password"
-          placeholder="Shop password"
-          value={password}
-          onChange={(ev) => setPassword(ev.target.value)}
-        />
-      </div>
       {error ? <p className="error">{error}</p> : null}
       <button type="submit" className="btn btn-primary auth-submit" disabled={busy}>
-        {busy ? 'Signing in…' : 'Login with Shop Code'}
+        {busy ? 'Opening…' : 'Continue to dashboard'}
       </button>
     </form>
   );

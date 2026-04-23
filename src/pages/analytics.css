@@ -358,6 +358,12 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 15%, transparent);
 }
 
+.analytics-kpi-delta--flat {
+  color: #fde68a;
+  background: color-mix(in srgb, #facc15 12%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, #facc15 10%, transparent);
+}
+
 .analytics-kpi-spark {
   margin: 0.35rem 0 0;
   min-height: 40px;

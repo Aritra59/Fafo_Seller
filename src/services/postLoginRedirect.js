@@ -1,5 +1,6 @@
 import { signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { readPersistedSellerId } from '../constants/session';
 import { auth, db } from '../firebase';
 import { getSellerByPhone, getUserDocument } from './firestore';
 
@@ -33,7 +34,27 @@ export async function resolvePostLoginPath(user) {
   }
 
   if (user.isAnonymous) {
-    return ROUTES.dashboard;
+    const row = await getUserDocument(user.uid);
+    const fromUser = row?.sellerId ? String(row.sellerId).trim() : '';
+    if (fromUser) {
+      const s = await loadSellerIfBlocked(fromUser);
+      if (s?.isBlocked === true) {
+        await signOut(auth);
+        return `${ROUTES.login}?blocked=1`;
+      }
+      return ROUTES.dashboard;
+    }
+    const storedId = readPersistedSellerId();
+    const fromSession = storedId ? String(storedId).trim() : '';
+    if (fromSession) {
+      const s2 = await loadSellerIfBlocked(fromSession);
+      if (s2?.isBlocked === true) {
+        await signOut(auth);
+        return `${ROUTES.login}?blocked=1`;
+      }
+      return ROUTES.dashboard;
+    }
+    return `${ROUTES.login}?need=shop`;
   }
 
   const phone = typeof user.phoneNumber === 'string' ? user.phoneNumber.trim() : '';

@@ -1,16 +1,27 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { hasSellerCodeSession } from '../constants/shopCodeLocalSession';
 import { clearDemoExplorer, isDemoExplorer } from '../constants/demoMode';
 import { useAuth } from '../hooks/useAuth';
 import { useSeller } from '../hooks/useSeller';
 import { logoutSeller } from '../services/logoutSeller';
 import { getSellerStatusBadge } from '../services/sellerHelpers';
+import { NomadLogo } from './NomadLogo';
 import { PwaInstallBanner } from './PwaInstallBanner';
 
-const linkStyle = ({ isActive }) => ({
-  fontWeight: isActive ? 600 : 400,
-  color: 'var(--text)',
-});
+const DRAWER_LINKS = [
+  { to: '/dashboard', label: 'Dashboard' },
+  { to: '/orders', label: 'Orders' },
+  { to: '/menu', label: 'Menu' },
+  { to: '/customers', label: 'Customers' },
+  { to: '/analytics', label: 'Analytics' },
+  { to: '/billing', label: 'Billing' },
+  { to: '/settings', label: 'Settings' },
+  { to: '/profile', label: 'Profile' },
+];
+
+const drawerClass = ({ isActive }) =>
+  isActive ? 'seller-drawer__link seller-drawer__link--active' : 'seller-drawer__link';
 
 export function Layout() {
   const { user } = useAuth();
@@ -19,14 +30,33 @@ export function Layout() {
   const navigate = useNavigate();
   const isLanding = pathname === '/';
   const demoExplore = !isLanding && isDemoExplorer();
-  const showSellerNav = Boolean(user) || demoExplore;
+  const showSellerNav = Boolean(user) || demoExplore || hasSellerCodeSession();
+  const codeOnlySession = hasSellerCodeSession() && !user;
+  const [drawer, setDrawer] = useState(false);
 
   const headerStatusBadge = useMemo(() => {
     if (!seller || sellerLoading) return null;
     return getSellerStatusBadge(seller);
   }, [seller, sellerLoading]);
 
+  const shopLabel = seller?.shopName?.trim() || '';
+  const showShopSub = Boolean(shopLabel);
+
+  useEffect(() => {
+    if (!drawer) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [drawer]);
+
+  useEffect(() => {
+    setDrawer(false);
+  }, [pathname]);
+
   async function handleLogout() {
+    setDrawer(false);
     await logoutSeller();
     navigate('/', { replace: true });
   }
@@ -36,113 +66,147 @@ export function Layout() {
     navigate('/', { replace: true });
   }
 
-  return (
-    <div className={`app-shell${isLanding ? ' app-shell--landing' : ''}`}>
-      <header className={`app-header${isLanding ? ' app-header--landing' : ''}`}>
-        {isLanding ? (
+  if (isLanding) {
+    return (
+      <div className="app-shell app-shell--landing">
+        <header className="app-header app-header--landing">
           <span className="app-header-spacer" aria-hidden />
-        ) : (
-          <Link to="/" className="app-brand">
-            FaFo
-          </Link>
-        )}
-        {isLanding ? (
           <Link to="/login" className="login-pill">
             <span className="login-pill-label">Login</span>
             <span className="login-pill-avatar" aria-hidden>
-              N
+              F
             </span>
           </Link>
-        ) : (
-          <nav aria-label="Primary">
-            {showSellerNav && headerStatusBadge ? (
-              <>
-                <span
-                  className={headerStatusBadge.className}
-                  title="Shop account status"
-                  aria-label={`Shop status: ${headerStatusBadge.label}`}
-                >
-                  {headerStatusBadge.label}
+        </header>
+        <main className="app-main app-main--landing">
+          <Outlet />
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-shell app-shell--seller">
+      {showSellerNav ? (
+        <>
+          <header className="seller-topbar">
+            <button
+              type="button"
+              className="seller-topbar__iconbtn seller-topbar__menu"
+              onClick={() => setDrawer(true)}
+              aria-label="Open menu"
+            >
+              <span className="seller-ico-burger" aria-hidden />
+            </button>
+            <div className="seller-topbar__title">
+              <span className="seller-topbar__logomark">
+                <NomadLogo size={34} decorative />
+              </span>
+              <div className="seller-topbar__brandcol">
+                <div className="seller-topbar__name-row">
+                  <span className="seller-topbar__product">FaFo</span>
+                  {headerStatusBadge ? (
+                    <span
+                      className={headerStatusBadge.className}
+                      title="Shop account status"
+                      aria-label={`Shop status: ${headerStatusBadge.label}`}
+                    >
+                      {headerStatusBadge.label}
+                    </span>
+                  ) : null}
+                </div>
+                {showShopSub ? (
+                  <span className="seller-topbar__shop" title={shopLabel}>
+                    {shopLabel}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <Link to="/settings" className="seller-topbar__gear" aria-label="Settings">
+              <span className="seller-ico-gear" aria-hidden />
+            </Link>
+          </header>
+
+          <div
+            className={`seller-drawer-backdrop${drawer ? ' is-open' : ''}`}
+            onClick={() => setDrawer(false)}
+            onKeyDown={() => setDrawer(false)}
+            role="presentation"
+            aria-hidden
+          />
+          <aside
+            className={`seller-drawer${drawer ? ' is-open' : ''}`}
+            aria-label="Menu"
+            aria-hidden={!drawer}
+          >
+            <div className="seller-drawer__head">
+              <div className="seller-drawer__brand">
+                <span className="seller-drawer__logomark">
+                  <NomadLogo size={40} decorative />
                 </span>
-                {' · '}
-              </>
-            ) : null}
-            <NavLink to="/" end className="muted" style={linkStyle}>
-              Home
-            </NavLink>
-            {' · '}
-            {showSellerNav ? (
-              <NavLink to="/dashboard" className="muted" style={linkStyle}>
-                Dashboard
-              </NavLink>
-            ) : null}
-            {showSellerNav ? ' · ' : null}
-            {showSellerNav ? (
-              <NavLink to="/orders" className="muted" style={linkStyle}>
-                Orders
-              </NavLink>
-            ) : null}
-            {showSellerNav ? ' · ' : null}
-            {showSellerNav ? (
-              <NavLink to="/menu" className="muted" style={linkStyle}>
-                Menu
-              </NavLink>
-            ) : null}
-            {showSellerNav ? ' · ' : null}
-            {showSellerNav ? (
-              <NavLink to="/customers" className="muted" style={linkStyle}>
-                Customers
-              </NavLink>
-            ) : null}
-            {showSellerNav ? ' · ' : null}
-            {showSellerNav ? (
-              <NavLink to="/analytics" className="muted" style={linkStyle}>
-                Analytics
-              </NavLink>
-            ) : null}
-            {showSellerNav ? ' · ' : null}
-            {showSellerNav ? (
-              <NavLink to="/settings" className="muted" style={linkStyle}>
-                Settings
-              </NavLink>
-            ) : null}
-            {user ? ' · ' : null}
-            {user ? (
-              <NavLink to="/profile" className="muted" style={linkStyle}>
-                Profile
-              </NavLink>
-            ) : null}
-            {user ? ' · ' : null}
-            {user ? (
-              <NavLink to="/billing" className="muted" style={linkStyle}>
-                Billing
-              </NavLink>
-            ) : null}
-            {user || demoExplore ? ' · ' : null}
-            {user ? (
-              <button type="button" className="app-header-logout muted" onClick={handleLogout}>
-                Logout
+                <div className="seller-drawer__brand-text">
+                  <span className="seller-drawer__product">FaFo</span>
+                  <span className="seller-drawer__sub">Seller</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="seller-drawer__close"
+                onClick={() => setDrawer(false)}
+                aria-label="Close menu"
+              >
+                ×
               </button>
-            ) : demoExplore ? (
-              <button type="button" className="app-header-logout muted" onClick={handleExitDemo}>
-                Exit demo
-              </button>
-            ) : (
-              <NavLink to="/login" className="muted" style={linkStyle}>
-                Sign in
-              </NavLink>
-            )}
-          </nav>
-        )}
-      </header>
-      <main className={`app-main${isLanding ? ' app-main--landing' : ''}`}>
+            </div>
+            <nav className="seller-drawer__nav" aria-label="App sections">
+              {DRAWER_LINKS.map((l) => (
+                <NavLink key={l.to} to={l.to} className={drawerClass} onClick={() => setDrawer(false)}>
+                  {l.label}
+                </NavLink>
+              ))}
+            </nav>
+            <div className="seller-drawer__foot">
+              {user ? (
+                <button type="button" className="seller-drawer__logout" onClick={handleLogout}>
+                  Logout
+                </button>
+              ) : codeOnlySession ? (
+                <button type="button" className="seller-drawer__logout" onClick={handleLogout}>
+                  Exit shop
+                </button>
+              ) : demoExplore ? (
+                <button type="button" className="seller-drawer__logout" onClick={handleExitDemo}>
+                  Exit demo
+                </button>
+              ) : (
+                <Link to="/login" className="seller-drawer__logoutlink" onClick={() => setDrawer(false)}>
+                  Sign in
+                </Link>
+              )}
+            </div>
+          </aside>
+        </>
+      ) : (
+        <header className="app-header app-header--bare">
+          <Link to="/" className="app-brand">
+            FaFo
+          </Link>
+          <Link to="/login" className="btn btn-ghost" style={{ fontSize: '0.875rem' }}>
+            Sign in
+          </Link>
+        </header>
+      )}
+
+      <main className="app-main app-main--seller">
         {demoExplore ? (
           <div className="demo-mode-banner" role="status">
-            Demo Mode — explore with mock data (no Firebase writes).
+            Demo mode: sample data only. Writing to the network is off.
           </div>
         ) : null}
-        {user && !isLanding && !demoExplore ? <PwaInstallBanner /> : null}
-        <Outlet />
+        {(user || hasSellerCodeSession()) && !isLanding && !demoExplore ? <PwaInstallBanner /> : null}
+        <div className="app-main__scroll">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

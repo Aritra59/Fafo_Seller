@@ -7,6 +7,7 @@ import { PhoneSignIn } from '../components/PhoneSignIn';
 import { ShopCodeAuth } from '../components/auth/ShopCodeAuth';
 import { clearDemoExplorer } from '../constants/demoMode';
 import { resolvePostLoginPath } from '../services/postLoginRedirect';
+import { PublicHomeAdSection } from '../components/ads/PublicHomeAdSection';
 
 const TITLE_ID = 'auth-modal-title';
 
@@ -34,8 +35,7 @@ export function Login() {
           clearDemoExplorer();
           navigate(path, { replace: true });
         }
-      } catch (e) {
-        console.error('[Login] post-login redirect failed', e);
+      } catch {
         if (!cancelled) {
           navigate('/onboarding', { replace: true });
         }
@@ -111,6 +111,12 @@ export function Login() {
             This shop cannot sign in (blocked). Contact support if you think this is a mistake.
           </p>
         ) : null}
+        {searchParams.get('need') === 'shop' ? (
+          <p className="auth-banner muted" style={{ margin: '0 0 1rem' }} role="status">
+            Sign in with your <strong>shop code</strong> on the tab below, or use phone if your
+            number is on file.
+          </p>
+        ) : null}
 
         <div className="auth-tabs" role="tablist" aria-label="Sign-in method">
           <div className="auth-tab-row auth-tab-row--3">
@@ -182,6 +188,10 @@ export function Login() {
           >
             {tab === 'shop' && <ShopCodeAuth />}
           </div>
+        </div>
+
+        <div className="auth-landing-ad" style={{ marginTop: '1rem' }}>
+          <PublicHomeAdSection />
         </div>
       </AuthModal>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { PublicHomeAdSection } from '../components/ads/PublicHomeAdSection';
 import { useAuth } from '../hooks/useAuth';
 import { NomadLogo } from '../components/NomadLogo';
 import { resolvePostLoginPath } from '../services/postLoginRedirect';
@@ -123,15 +124,7 @@ export function Home() {
           </div>
         </section>
 
-        <section
-          className="landing-ad"
-          aria-label="Advertisements and promotions"
-        >
-          <div className="landing-ad-inner">
-            <p className="landing-ad-title">Advertisements &amp; Promos Banner</p>
-            <p className="landing-ad-placeholder">Placeholder Image</p>
-          </div>
-        </section>
+        <PublicHomeAdSection />
       </div>
     </div>
   );

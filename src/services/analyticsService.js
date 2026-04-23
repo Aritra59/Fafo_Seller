@@ -339,18 +339,6 @@ export function extractMenuFilterOptions(products) {
 }
 
 /**
- * Map product name (lower) to menu key
- */
-function buildNameToMenuMap(products) {
-  const m = new Map();
-  for (const p of products ?? []) {
-    const n = String(p?.name ?? p?.title ?? '').trim().toLowerCase();
-    if (n) m.set(n, productMenuKey(p));
-  }
-  return m;
-}
-
-/**
  * @param {object} line
  * @param {Map<string, string>} nameToMenu
  */

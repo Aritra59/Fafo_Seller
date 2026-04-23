@@ -100,6 +100,8 @@ export function isSellerVisibleToBuyers(seller) {
  */
 export function canSellerAcceptNewOrders(seller) {
   if (!seller) return false;
+  if (seller.sellingAccessDisabled === true) return false;
+  if (seller.fafoSubscriptionActive === false) return false;
   const mode = resolveEffectiveSellerMode(seller);
   if (mode === 'blocked' || mode === 'suspended') return false;
   if (mode === 'freeTrial') return true;

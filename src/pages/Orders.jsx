@@ -160,6 +160,18 @@ function formatCreatedParts(ts) {
   }
 }
 
+function orderPaymentLabel(order) {
+  const st = normalizeStatus(order.status);
+  if (st === 'cancelled') return '—';
+  if (order.paymentReceived === true || order.paymentAccepted === true) {
+    return 'Paid';
+  }
+  const mode = String(order.paymentMode ?? order.payment ?? '').toLowerCase();
+  if (mode === 'upi') return 'UPI';
+  if (mode === 'cash') return 'Cash';
+  return 'Pending';
+}
+
 const OrderPosTile = memo(function OrderPosTile({ order, onSelect }) {
   const total = orderTotal(order);
   const items = lineItemCount(order) || 0;
@@ -192,6 +204,9 @@ const OrderPosTile = memo(function OrderPosTile({ order, onSelect }) {
           {items} item{items === 1 ? '' : 's'}
         </span>
       </div>
+      <p className="orders-pos-tile__pay muted" style={{ margin: 0, fontSize: '0.75rem' }}>
+        {orderPaymentLabel(order)}
+      </p>
       <div className="orders-pos-tile__time muted">
         {date ? (
           <>
@@ -530,7 +545,7 @@ export function Orders() {
         const unit = p != null ? Number(p.price) : NaN;
         if (!Number.isFinite(unit) || unit < 0) throw new Error('Invalid product selection.');
         const label = String(p.name ?? p.title ?? 'Item').trim() || 'Item';
-        items.push({ name: label, qty, price: unit });
+        items.push({ productId: pid, name: label, qty, price: unit });
         computed += unit * qty;
       }
       if (items.length === 0) {

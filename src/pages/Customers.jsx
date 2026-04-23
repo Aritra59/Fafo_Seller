@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { CustomerCard } from '../components/CustomerCard';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
-import { reverseGeocodeLatLng } from '../services/geocode';
 import {
   aggregateCustomersFromOrders,
   buildUserIndexes,
@@ -11,7 +10,6 @@ import {
   formatMonthYear,
   matchesCustomerFilter,
   resolveCustomerProfile,
-  shortenAddressLabel,
   sortCustomers,
 } from '../services/customerService';
 import { subscribeOrdersBySellerId, subscribeUsersCollection } from '../services/firestore';
@@ -40,8 +38,6 @@ export function Customers() {
   const debouncedSearch = useDebouncedValue(search, 300);
   const [tab, setTab] = useState('all');
   const [sort, setSort] = useState('recent');
-  const [locByRoute, setLocByRoute] = useState({});
-
   useEffect(() => {
     if (!sellerId) {
       setOrders([]);
@@ -93,45 +89,6 @@ export function Customers() {
       sort,
     );
   }, [orders, indexes, tab, debouncedSearch, sort]);
-
-  useEffect(() => {
-    const aggs = aggregateCustomersFromOrders(orders);
-    const base = aggs.map((a) => resolveCustomerProfile(a, indexes));
-    if (base.length === 0) {
-      setLocByRoute({});
-      return undefined;
-    }
-    let cancelled = false;
-    const ctrl = new AbortController();
-
-    (async () => {
-      const next = {};
-      for (const p of base) {
-        const id = p.routeId;
-        if (p.addressStr) {
-          next[id] = shortenAddressLabel(p.addressStr);
-          continue;
-        }
-        if (!p.latLng) continue;
-        try {
-          const label = await reverseGeocodeLatLng(
-            p.latLng.lat,
-            p.latLng.lng,
-            ctrl.signal,
-          );
-          if (label) next[id] = label;
-        } catch {
-          /* aborted */
-        }
-      }
-      if (!cancelled) setLocByRoute(next);
-    })();
-
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-    };
-  }, [orders, indexes]);
 
   if (sellerLoading) {
     return (
@@ -248,7 +205,7 @@ export function Customers() {
         <ul className="customers-premium-grid">
           {profiles.map((p) => (
             <li key={p.routeId}>
-              <CustomerCard profile={p} locationLabel={locByRoute[p.routeId]} />
+              <CustomerCard profile={p} />
             </li>
           ))}
         </ul>

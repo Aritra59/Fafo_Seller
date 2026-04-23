@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSeller } from '../hooks/useSeller';
 import {
+  FAFO_BILLING_SUPPORT_WA,
+  FAFO_BILLING_WA_PREFILL,
+  FAFO_PLATFORM_UPI,
+} from '../constants/billing';
+import {
   createBillingIntent,
   recomputeSellerSlotCount,
   subscribeBillingBySellerId,
@@ -15,7 +20,7 @@ import {
 } from '../services/sellerHelpers';
 import { buildUpiPayUrl } from '../services/upi';
 
-const PACKAGES = [99, 249, 499, 799, 999, 4999];
+const PACKAGES = [99, 249, 2, 499, 799, 999];
 
 function whatsappHref(phoneE164, body) {
   const digits = String(phoneE164 ?? '').replace(/\D/g, '');
@@ -126,12 +131,9 @@ export function PlansBilling() {
   const dailyOrderFee = avgOrderHint > 0 ? avgOrderHint * (feePct / 100) : 0;
   const dailyUsageEst = dailySlotFee + dailyOrderFee;
 
-  const upiId =
-    String(seller?.upiId ?? '').trim() ||
-    String(import.meta.env.VITE_BILLING_UPI_ID ?? '').trim();
-  const payeeName = String(seller?.upiName ?? seller?.shopName ?? 'FaFo').trim() || 'FaFo';
-  const supportWa =
-    import.meta.env.VITE_SUPPORT_WHATSAPP || seller?.phone || '';
+  const upiId = FAFO_PLATFORM_UPI;
+  const payeeName = 'FaFo';
+  const supportWa = FAFO_BILLING_SUPPORT_WA;
   const effective = seller ? resolveEffectiveSellerMode(seller) : 'demo';
   const isLiveAccount = effective === 'live';
   const showTrialCopy = effective === 'freeTrial';
@@ -183,6 +185,14 @@ export function PlansBilling() {
         amount: selectedAmount,
       });
       setLastIntentId(id);
+      const href = buildUpiPayUrl({
+        pa: upiId,
+        pn: payeeName,
+        am: String(selectedAmount),
+      });
+      if (href) {
+        window.location.assign(href);
+      }
     } catch (err) {
       setPayError(err.message ?? 'Could not save billing request.');
     } finally {
@@ -196,6 +206,7 @@ export function PlansBilling() {
       : '';
 
   const waProofUrl = whatsappHref(supportWa, proofBody);
+  const waSupportUrl = whatsappHref(supportWa, FAFO_BILLING_WA_PREFILL);
 
   if (loading) {
     return (
@@ -275,8 +286,8 @@ export function PlansBilling() {
       <section className="card stack plans-billing-section" aria-label="Slot usage">
         <h2 className="plans-billing-section-title">Slots &amp; usage</h2>
         <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-          <strong>totalSlots</strong> = active products + combos + enabled menu sections (synced
-          on your shop). Tap refresh after editing menu.
+          Slots count active products, combos, and menu sections. Tap refresh after you change the
+          menu.
         </p>
         <ul className="plans-billing-pricing-list">
           <li>
@@ -322,7 +333,8 @@ export function PlansBilling() {
       <section className="card stack plans-billing-section" aria-label="Balance">
         <h2 className="plans-billing-section-title">Balance</h2>
         <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-          balance ≈ approved recharge − usage (admin can sync fields on your seller doc).
+          Balance is based on approved payments minus usage. If something looks off, use WhatsApp
+          support on this page.
         </p>
         <ul className="plans-billing-pricing-list">
           <li>
@@ -351,10 +363,10 @@ export function PlansBilling() {
       </section>
 
       <section className="card stack plans-billing-section" aria-label="Pricing">
-        <h2 className="plans-billing-section-title">Global defaults</h2>
+        <h2 className="plans-billing-section-title">Rate defaults</h2>
         <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-          From Firestore <code className="plans-billing-code">settings/global</code> (or defaults
-          below).
+          Standard rates below apply to your plan. Suggested plans: ₹99/mo starter, ₹249/mo growth,
+          or ₹2/day pay-as-you-sell — team can align your account to the best fit.
         </p>
         <ul className="plans-billing-pricing-list">
           <li>
@@ -433,13 +445,9 @@ export function PlansBilling() {
         >
           {copyDone ? 'Copied UPI ID' : 'Copy UPI ID'}
         </button>
-        {!upiId ? (
-          <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-            Set your shop UPI in Settings, or <code className="plans-billing-code">
-              VITE_BILLING_UPI_ID
-            </code> in <code className="plans-billing-code">.env</code>.
-          </p>
-        ) : null}
+        <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+          You pay the FaFo platform using this UPI. Your own shop UPI for buyers is in Settings.
+        </p>
 
         <button
           type="button"
@@ -460,14 +468,22 @@ export function PlansBilling() {
               if (actionsLocked) e.preventDefault();
             }}
           >
-            WhatsApp payment proof
+            Send payment details on WhatsApp
           </a>
-        ) : (
-          <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-            Set <code className="plans-billing-code">VITE_SUPPORT_WHATSAPP</code> or your shop
-            phone for WhatsApp proof.
-          </p>
-        )}
+        ) : null}
+        {waSupportUrl ? (
+          <a
+            href={actionsLocked ? undefined : waSupportUrl}
+            className={`btn btn-ghost plans-billing-wa${actionsLocked ? ' plans-billing-link-disabled' : ''}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              if (actionsLocked) e.preventDefault();
+            }}
+          >
+            WhatsApp support
+          </a>
+        ) : null}
       </section>
 
       {lastIntentId && selectedAmount != null ? (

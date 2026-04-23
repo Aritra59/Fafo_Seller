@@ -15,6 +15,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import {
   DEMO_COMBOS,
@@ -186,7 +187,7 @@ export async function allocateUniqueShopSlug(shopName) {
  * If `sellers/{id}` has no usable shopCode, assign one (and legacy `code` alias) using shop name from doc or hint.
  * Safe to call on every login; no-ops when shopCode already set.
  */
-export async function ensureSellerShopCodeFields(sellerId, hint = {}) {
+export async function ensureSellerShopCodeFields(sellerId) {
   const sid = String(sellerId ?? '').trim();
   if (!sid || isDemoSellerId(sid)) {
     return null;
@@ -565,6 +566,31 @@ export async function upsertSellerUser(
   return ref;
 }
 
+/**
+ * Keep `users/{uid}.sellerId` in sync when a seller already exists (e.g. admin-created shop + phone sign-in).
+ */
+export async function ensureSellerUserLinked(authUser, seller) {
+  if (!authUser?.uid || !seller?.id) {
+    return;
+  }
+  if (isDemoSellerId(seller.id)) {
+    return;
+  }
+  const phone =
+    typeof authUser.phoneNumber === 'string' && authUser.phoneNumber.trim()
+      ? authUser.phoneNumber.trim()
+      : typeof seller.phone === 'string' && seller.phone.trim()
+        ? seller.phone.trim()
+        : null;
+  const sc = normalizeShopCode(seller.shopCode ?? seller.code ?? '');
+  await upsertSellerUser(authUser.uid, {
+    sellerId: seller.id,
+    role: 'seller',
+    phone,
+    shopCode: sc || null,
+  });
+}
+
 const TRIAL_MS = 15 * 24 * 60 * 60 * 1000;
 
 /**
@@ -591,11 +617,6 @@ export async function createSellerProfile(uid, fields) {
 
   const now = new Date();
   const trialEndDate = new Date(now.getTime() + TRIAL_MS);
-
-  const shopLoginPassword = String(fields.shopLoginPassword ?? '').trim();
-  if (!shopLoginPassword || shopLoginPassword.length < 6) {
-    throw new Error('Choose a shop login password (at least 6 characters).');
-  }
 
   let shopCode = normalizeShopCode(fields.shopCode ?? '');
   if (!shopCode) {
@@ -624,7 +645,6 @@ export async function createSellerProfile(uid, fields) {
     shopUrl: publicUrl,
     publicShopUrl: publicUrl,
     qrUrl: null,
-    password: shopLoginPassword,
     location: new GeoPoint(lat, lng),
     address,
     slots: 0,
@@ -636,6 +656,7 @@ export async function createSellerProfile(uid, fields) {
     trialEnd: Timestamp.fromDate(trialEndDate),
     isLive: false,
     isBlocked: false,
+    fafoSubscriptionActive: true,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -832,6 +853,14 @@ export async function updateSellerDocument(sellerId, fields) {
       payload.shopOpenManualMode = m;
     }
   }
+  if (fields.servingWindow !== undefined) {
+    const w = String(fields.servingWindow ?? '')
+      .trim()
+      .toLowerCase();
+    if (w === 'morning' || w === 'lunch' || w === 'dinner' || w === 'allday') {
+      payload.servingWindow = w;
+    }
+  }
   if (fields.qrCodeUrl !== undefined) {
     const u = fields.qrCodeUrl;
     payload.qrCodeUrl =
@@ -874,6 +903,9 @@ export async function updateSellerDocument(sellerId, fields) {
       typeof fields.billingWarning === 'string'
         ? fields.billingWarning.trim() || null
         : null;
+  }
+  if (fields.fafoSubscriptionActive !== undefined) {
+    payload.fafoSubscriptionActive = Boolean(fields.fafoSubscriptionActive);
   }
 
   await updateDoc(ref, payload);
@@ -1206,15 +1238,82 @@ export async function patchOrder(orderId, sellerId, data) {
 }
 
 /**
+ * Reduce product `quantity` when an order is completed/delivered (uses `items[].productId`).
+ * Idempotent when `orders.inventoryDeducted` is true.
+ */
+async function applyOrderInventoryDeductions(sellerId, orderData) {
+  const sid = String(sellerId ?? '').trim();
+  if (!sid || isDemoSellerId(sid)) {
+    return;
+  }
+  const items = orderData.items ?? orderData.lineItems ?? orderData.lines;
+  if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+  const batch = writeBatch(db);
+  let n = 0;
+  for (const line of items) {
+    const pid = String(line.productId ?? line.id ?? '').trim();
+    const q = Number(line.qty ?? line.quantity ?? 0);
+    if (!pid || !Number.isFinite(q) || q <= 0) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    const pref = doc(db, 'products', pid);
+    // eslint-disable-next-line no-await-in-loop
+    const psnap = await getDoc(pref);
+    if (!psnap.exists() || psnap.data().sellerId !== sid) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    const data = psnap.data();
+    const cur = Number(data.quantity ?? 0);
+    const nq = Math.max(0, Math.floor(cur - q));
+    const wasAvailable = data.available !== false && data.available !== 0;
+    const newAvail = nq === 0 ? false : wasAvailable;
+    batch.update(pref, {
+      quantity: nq,
+      available: newAvail,
+      updatedAt: serverTimestamp(),
+    });
+    n += 1;
+  }
+  if (n > 0) {
+    await batch.commit();
+    await recomputeSellerSlotCount(sid);
+  }
+}
+
+/**
  * Update `orders/{orderId}.status` after verifying `sellerId` matches.
- * Sets `updatedAt` with `serverTimestamp()` (preferred over `new Date()` in Firestore).
+ * On `completed` / `delivered`, applies one-time stock deduction from line items.
  */
 export async function updateOrderStatus(orderId, sellerId, status) {
+  const oid = String(orderId ?? '').trim();
+  const sid = String(sellerId ?? '').trim();
   const next = String(status ?? '').trim();
-  if (!next) {
+  if (!oid || !sid || !next) {
     throw new Error('Invalid status.');
   }
-  await patchOrder(orderId, sellerId, { status: next });
+  if (isDemoSellerId(sid)) {
+    throw new Error('Demo mode is read-only.');
+  }
+  const ref = doc(db, 'orders', oid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Order not found.');
+  }
+  const data = snap.data();
+  if (data.sellerId !== sid) {
+    throw new Error('You cannot update this order.');
+  }
+  const nextL = next.toLowerCase();
+  const extra = { status: next, updatedAt: serverTimestamp() };
+  if ((nextL === 'completed' || nextL === 'delivered') && !data.inventoryDeducted) {
+    await applyOrderInventoryDeductions(sid, data);
+    extra.inventoryDeducted = true;
+  }
+  await updateDoc(ref, extra);
 }
 
 export function getCuisineCategoryLabel(product) {
@@ -1296,6 +1395,15 @@ function normalizeProductFieldsInput(fields) {
   if (Object.prototype.hasOwnProperty.call(fields, 'available')) {
     available = Boolean(fields.available);
   }
+  if (quantity === 0) {
+    available = false;
+  }
+
+  let menuGroupId;
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuGroupId')) {
+    const m = fields.menuGroupId;
+    menuGroupId = m == null || m === '' ? null : String(m).trim();
+  }
 
   return {
     name,
@@ -1310,6 +1418,7 @@ function normalizeProductFieldsInput(fields) {
     ...(discountLabel !== undefined ? { discountLabel } : {}),
     ...(discountPercent !== undefined ? { discountPercent } : {}),
     ...(imageUrl !== undefined ? { imageUrl } : {}),
+    ...(menuGroupId !== undefined ? { menuGroupId } : {}),
   };
 }
 
@@ -1352,6 +1461,9 @@ export async function createProduct(sellerId, fields) {
   }
   if (normalized.discountPercent != null) {
     docPayload.discountPercent = normalized.discountPercent;
+  }
+  if (normalized.menuGroupId != null) {
+    docPayload.menuGroupId = normalized.menuGroupId;
   }
   const ref = await addDoc(collection(db, 'products'), docPayload);
   return ref.id;
@@ -1407,6 +1519,41 @@ export async function updateProduct(productId, sellerId, fields) {
     ...normalized,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Partial product update (e.g. availability toggle) without resubmitting the full form.
+ * @param {Record<string, unknown>} fields
+ */
+export async function patchProductFields(productId, sellerId, fields) {
+  const pid = String(productId ?? '').trim();
+  const sid = String(sellerId ?? '').trim();
+  if (!pid || !sid) {
+    throw new Error('Missing item or seller.');
+  }
+  if (isDemoSellerId(sid)) {
+    throw new Error('Demo mode is read-only.');
+  }
+  const ref = doc(db, 'products', pid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Item not found.');
+  }
+  if (snap.data().sellerId !== sid) {
+    throw new Error('You cannot edit this item.');
+  }
+  const payload = {};
+  if (Object.prototype.hasOwnProperty.call(fields, 'available')) {
+    payload.available = Boolean(fields.available);
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuGroupId')) {
+    const m = fields.menuGroupId;
+    payload.menuGroupId = m == null || m === '' ? null : String(m).trim();
+  }
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await updateDoc(ref, { ...payload, updatedAt: serverTimestamp() });
 }
 
 /**

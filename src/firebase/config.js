@@ -1,7 +1,3 @@
-/**
- * Firebase web client config — must match Firebase Console → Project settings → Your apps.
- * Vite exposes only `VITE_*` from `.env` (restart dev server after changes).
- */
 const measurementId = import.meta.env.VITE_FIREBASE_MEASUREMENT_ID;
 
 export const firebaseConfig = {
@@ -25,23 +21,8 @@ function assertConfig() {
   ];
   const missing = required.filter(([, v]) => !v).map(([k]) => k);
   if (missing.length > 0) {
-    console.error(
-      `[Firebase] Missing env: ${missing.join(', ')}. Copy .env.example to .env and fill values.`,
-    );
+    console.error('App configuration is incomplete. Check your project settings.');
   }
 }
 
 assertConfig();
-
-if (import.meta.env.DEV) {
-  console.log('[Firebase] Web config loaded:', {
-    projectId: firebaseConfig.projectId,
-    authDomain: firebaseConfig.authDomain,
-    appId: firebaseConfig.appId,
-    storageBucket: firebaseConfig.storageBucket,
-    measurementId: firebaseConfig.measurementId ?? '(omitted)',
-    apiKeyPrefix: firebaseConfig.apiKey
-      ? `${String(firebaseConfig.apiKey).slice(0, 8)}…`
-      : '(missing)',
-  });
-}

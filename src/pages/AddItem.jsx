@@ -10,6 +10,7 @@ import {
   recomputeSellerSlotCount,
   updateProduct,
 } from '../services/firestore';
+import { listMenuGroups } from '../services/menuGroupsService';
 import {
   compressImageToJpegBlob,
   isAcceptedImageType,
@@ -47,6 +48,8 @@ export function AddItem() {
   const [tagFastSelling, setTagFastSelling] = useState(false);
   const [tagSpecial, setTagSpecial] = useState(false);
   const [available, setAvailable] = useState(true);
+  const [menuGroupId, setMenuGroupId] = useState('');
+  const [menuGroups, setMenuGroups] = useState([]);
   const [discountLabel, setDiscountLabel] = useState('');
   const [discountPercent, setDiscountPercent] = useState('');
 
@@ -68,6 +71,25 @@ export function AddItem() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!seller?.id) {
+      setMenuGroups([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listMenuGroups(seller.id);
+        if (!cancelled) setMenuGroups(rows);
+      } catch {
+        if (!cancelled) setMenuGroups([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [seller?.id]);
 
   useEffect(() => {
     if (!isEdit) {
@@ -134,6 +156,9 @@ export function AddItem() {
               : '';
         setExistingImageUrl(img);
 
+        const mg = p.menuGroupId;
+        setMenuGroupId(typeof mg === 'string' && mg.trim() ? mg.trim() : '');
+
         setProductLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -197,6 +222,7 @@ export function AddItem() {
       tags: buildTags(tagFastSelling, tagSpecial),
       discountLabel,
       discountPercent,
+      menuGroupId: menuGroupId.trim() ? menuGroupId.trim() : null,
     };
   }
 
@@ -455,6 +481,30 @@ export function AddItem() {
             onChange={(e) => setItemCategory(e.target.value)}
             placeholder="e.g. Beverages"
           />
+        </div>
+
+        <div className="add-item-field">
+          <label className="label" htmlFor="add-menu-group">
+            Menu group (for storefront)
+          </label>
+          <select
+            id="add-menu-group"
+            className="input"
+            value={menuGroupId}
+            onChange={(e) => setMenuGroupId(e.target.value)}
+            aria-label="Link to menu group"
+          >
+            <option value="">None (not grouped)</option>
+            {menuGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.menuName || g.id}
+              </option>
+            ))}
+          </select>
+          <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem' }}>
+            Create groups under <strong>Menu → Menu groups</strong>. The dashboard session (Breakfast /
+            Lunch, etc.) filters by this.
+          </p>
         </div>
 
         <div className="add-item-field">

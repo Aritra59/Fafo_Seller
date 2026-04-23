@@ -2,8 +2,9 @@ import { useId } from 'react';
 
 /**
  * Nomad / FaFo brand mark — vector logo with gold gradient tile.
+ * @param {{ size?: number, decorative?: boolean }} [props] — if `decorative`, hide from screen readers (e.g. next to visible "FaFo" text).
  */
-export function NomadLogo({ size = 112 }) {
+export function NomadLogo({ size = 112, decorative = false }) {
   const gid = useId().replace(/:/g, '');
   const gradId = `nomad-gold-${gid}`;
 
@@ -11,8 +12,9 @@ export function NomadLogo({ size = 112 }) {
     <div
       className="nomad-logo-tile"
       style={{ width: size, height: size }}
-      role="img"
-      aria-label="Nomad"
+      role={decorative ? 'presentation' : 'img'}
+      aria-hidden={decorative || undefined}
+      aria-label={decorative ? undefined : 'FaFo'}
     >
       <svg
         viewBox="0 0 88 88"

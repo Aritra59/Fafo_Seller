@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { clearDemoExplorer, DEMO_SELLER, isDemoExplorer } from '../constants/demoMode';
+import { readSellerCodeSessionLocal } from '../constants/shopCodeLocalSession';
 import { persistSellerId } from '../constants/session';
 import { useAuth } from './useAuth';
 import {
   ensureSellerPublicAccess,
   ensureSellerShopCodeFields,
+  ensureSellerUserLinked,
   getSellerForCurrentUser,
   subscribeSellerById,
   updateSellerDocument,
@@ -12,8 +14,7 @@ import {
 import { resolveShopOpenNow } from '../services/sellerHelpers';
 
 /**
- * Real-time `sellers` document for the current user.
- * `sellerId` is the shop document id — use for orders/products queries, not `user.uid`.
+ * `seller` document for the current session: Firebase user **or** shop-code local session.
  */
 export function useSeller() {
   const { user, loading: authLoading } = useAuth();
@@ -22,6 +23,10 @@ export function useSeller() {
   const [error, setError] = useState(null);
   const [version, setVersion] = useState(0);
   const shopCodeBackfillInFlight = useRef(false);
+
+  const shopCodeOnly = Boolean(
+    !user && !authLoading && readSellerCodeSessionLocal()?.sellerId,
+  );
 
   useEffect(() => {
     if (isDemoExplorer()) {
@@ -35,58 +40,85 @@ export function useSeller() {
       return undefined;
     }
 
-    if (!user) {
-      setSeller(null);
+    if (user) {
+      let cancelled = false;
+      let unsubSeller = () => {};
+
+      setLoading(true);
       setError(null);
-      setLoading(false);
-      return undefined;
+
+      (async () => {
+        try {
+          const initial = await getSellerForCurrentUser(user.uid, user);
+          if (cancelled) return;
+          if (!initial?.id) {
+            setSeller(null);
+            setLoading(false);
+            return;
+          }
+
+          unsubSeller = subscribeSellerById(
+            initial.id,
+            (row) => {
+              if (!cancelled) {
+                setSeller(row);
+                setLoading(false);
+              }
+            },
+            (e) => {
+              if (!cancelled) {
+                setError(e);
+                setSeller(null);
+                setLoading(false);
+              }
+            },
+          );
+        } catch (e) {
+          if (!cancelled) {
+            setError(e);
+            setSeller(null);
+            setLoading(false);
+          }
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        unsubSeller();
+      };
     }
 
-    let cancelled = false;
-    let unsubSeller = () => {};
+    const sid = readSellerCodeSessionLocal()?.sellerId;
+    if (sid) {
+      let cancelled = false;
+      setLoading(true);
+      setError(null);
+      const unsub = subscribeSellerById(
+        sid,
+        (row) => {
+          if (!cancelled) {
+            setSeller(row);
+            setLoading(false);
+          }
+        },
+        (e) => {
+          if (!cancelled) {
+            setError(e);
+            setSeller(null);
+            setLoading(false);
+          }
+        },
+      );
+      return () => {
+        cancelled = true;
+        unsub();
+      };
+    }
 
-    setLoading(true);
+    setSeller(null);
     setError(null);
-
-    (async () => {
-      try {
-        const initial = await getSellerForCurrentUser(user.uid, user);
-        if (cancelled) return;
-        if (!initial?.id) {
-          setSeller(null);
-          setLoading(false);
-          return;
-        }
-
-        unsubSeller = subscribeSellerById(
-          initial.id,
-          (row) => {
-            if (!cancelled) {
-              setSeller(row);
-              setLoading(false);
-            }
-          },
-          (e) => {
-            if (!cancelled) {
-              setError(e);
-              setSeller(null);
-              setLoading(false);
-            }
-          },
-        );
-      } catch (e) {
-        if (!cancelled) {
-          setError(e);
-          setSeller(null);
-          setLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      unsubSeller();
-    };
+    setLoading(false);
+    return undefined;
   }, [user, authLoading, version]);
 
   useEffect(() => {
@@ -102,9 +134,16 @@ export function useSeller() {
     }
   }, [seller?.id]);
 
-  /** Backfill `shopCode` / `code` for legacy seller docs (silent). */
   useEffect(() => {
-    if (isDemoExplorer() || !seller?.id) {
+    if (!user || isDemoExplorer() || !seller?.id || shopCodeOnly) {
+      return undefined;
+    }
+    ensureSellerUserLinked(user, seller).catch(() => {});
+    return undefined;
+  }, [user, seller, shopCodeOnly]);
+
+  useEffect(() => {
+    if (isDemoExplorer() || !seller?.id || shopCodeOnly) {
       return undefined;
     }
     const sc = String(seller.shopCode ?? seller.code ?? '').trim();
@@ -118,28 +157,28 @@ export function useSeller() {
     shopCodeBackfillInFlight.current = true;
     (async () => {
       try {
-        await ensureSellerShopCodeFields(seller.id, seller);
+        await ensureSellerShopCodeFields(seller.id);
       } catch {
         shopCodeBackfillInFlight.current = false;
       }
     })();
     return undefined;
-  }, [seller?.id, seller?.shopCode, seller?.code, seller?.shopName]);
+  }, [seller, shopCodeOnly]);
 
-  /** Public menu URL, slug, and shop QR in Storage (silent; idempotent). */
   useEffect(() => {
-    if (isDemoExplorer() || !seller?.id) {
+    if (isDemoExplorer() || !seller?.id || shopCodeOnly) {
       return undefined;
     }
     const id = window.setTimeout(() => {
       ensureSellerPublicAccess(seller.id).catch(() => {});
     }, 1600);
-    return () => window.clearTimeout(id);
-  }, [seller?.id]);
+    return () => {
+      window.clearTimeout(id);
+    };
+  }, [seller, shopCodeOnly]);
 
-  /** Sync buyer-facing open/closed flag when hours change (no-op if unchanged). */
   useEffect(() => {
-    if (!seller?.id || isDemoExplorer()) return undefined;
+    if (!seller?.id || isDemoExplorer() || shopCodeOnly) return undefined;
     const next = resolveShopOpenNow(seller);
     if (next === null) return undefined;
     if (seller.shopOpenNow === next) return undefined;
@@ -150,20 +189,11 @@ export function useSeller() {
     return () => {
       window.clearTimeout(t);
     };
-  }, [
-    seller?.id,
-    seller?.openingTime,
-    seller?.closingTime,
-    seller?.openTime,
-    seller?.closeTime,
-    seller?.shopOpenManualMode,
-    seller?.shopOpenMode,
-    seller?.shopOpenNow,
-  ]);
+  }, [seller, shopCodeOnly]);
 
   const reload = () => setVersion((v) => v + 1);
 
   const sellerId = seller?.id ?? null;
 
-  return { seller, sellerId, loading, error, reload };
+  return { seller, sellerId, loading, error, reload, shopCodeOnly };
 }

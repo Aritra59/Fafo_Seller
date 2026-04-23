@@ -37,20 +37,20 @@ import { GrowthSection } from '../components/analytics/GrowthSection';
 import { InsightSection } from '../components/analytics/InsightSection';
 import './analytics.css';
 
-/** Metrics are rule-based from Firestore — see `analyticsService.js` file header (not an AI model). */
+/** Metrics are rule-based (aggregations and heuristics on your Firestore data — not an AI model). */
 
 function countedInRange(orders, range) {
   return filterOrdersInDateRange(orders, range).filter((o) => isStatusCounted(o.status));
 }
 
 export function AnalyticsPage() {
-  const { seller, sellerId, loading, error } = useSeller();
+  const { sellerId, loading, error } = useSeller();
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
 
   /** Default to week so older orders in Firestore (not from “today”) still show KPIs. */
   const [period, setPeriod] = useState(
-    /** @type {'day' | 'week' | 'month'} */ ('week'),
+    /** @type {'day' | 'week' | 'month'} */ ('day'),
   );
   const [mainTab, setMainTab] = useState(/** @type {'shop' | 'menu' | 'customer'} */ ('shop'));
   const [menuSub, setMenuSub] = useState('all');
@@ -69,17 +69,9 @@ export function AnalyticsPage() {
     return subscribeOrdersBySellerId(
       sid,
       (rows) => {
-        if (import.meta.env.DEV) {
-          // eslint-disable-next-line no-console
-          console.log('[Analytics] orders snapshot', { sellerId: sid, count: rows.length });
-        }
         setOrders(rows);
       },
-      (e) => {
-        if (import.meta.env.DEV) {
-          // eslint-disable-next-line no-console
-          console.error('[Analytics] orders subscription', e);
-        }
+      () => {
         setOrders([]);
       },
     );
@@ -94,10 +86,6 @@ export function AnalyticsPage() {
     return subscribeProductsBySellerId(
       sid,
       (rows) => {
-        if (import.meta.env.DEV) {
-          // eslint-disable-next-line no-console
-          console.log('[Analytics] products snapshot', { count: rows.length });
-        }
         setProducts(rows);
       },
       () => setProducts([]),
@@ -291,11 +279,6 @@ export function AnalyticsPage() {
       <h1 className="analytics-h1" style={{ margin: '0 0 0.35rem' }}>
         Analytics
       </h1>
-      {loading ? (
-        <p className="muted" style={{ fontSize: '0.75rem', margin: '0 0 0.5rem' }}>
-          Loading your shop data…
-        </p>
-      ) : null}
       {error ? (
         <p className="error" style={{ margin: '0 0 0.5rem' }} role="alert">
           {error.message}
@@ -306,7 +289,7 @@ export function AnalyticsPage() {
           className="muted"
           style={{ fontSize: '0.75rem', margin: '0 0 0.5rem' }}
         >
-          Demo: metrics reflect the built-in sample orders in demo mode.
+          Demo: sample data only.
         </p>
       ) : null}
 
@@ -324,9 +307,7 @@ export function AnalyticsPage() {
           }}
           role="status"
         >
-          No orders loaded for this shop yet, or no orders in the selected window. Period filters and
-          KPI cards below use live data; numbers stay at zero until orders match the period and
-          status rules.
+          No orders in the selected period yet. Change the range above or wait for new orders.
         </div>
       ) : null}
 
