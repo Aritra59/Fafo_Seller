@@ -1,0 +1,46 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // `users/{auth.uid}.sellerId` must match `{sellerId}` in the path (adjust if your user doc differs).
+    function ownsSellerFolder(sellerId) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.sellerId == sellerId;
+    }
+
+    match /shops/{sellerId}/shop.jpg {
+      allow read: if true;
+      allow write: if ownsSellerFolder(sellerId)
+        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /products/{sellerId}/{fileName} {
+      allow read: if true;
+      allow write: if ownsSellerFolder(sellerId)
+        && fileName.matches('^.+\\.jpg$')
+        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /combos/{sellerId}/{fileName} {
+      allow read: if true;
+      allow write: if ownsSellerFolder(sellerId)
+        && fileName.matches('^.+\\.jpg$')
+        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /shops/{sellerId}/upi-qr.jpg {
+      allow read: if true;
+      allow write: if ownsSellerFolder(sellerId)
+        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
