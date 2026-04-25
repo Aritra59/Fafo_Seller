@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { Link } from 'react-router-dom';
+import { CalendarDays, IndianRupee, Package } from 'lucide-react';
 
 function badgeClass(badge) {
   const b = String(badge ?? 'NEW').toLowerCase();
@@ -48,12 +49,22 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
 
       <div className="customer-premium-card__stats">
         <span className="customer-premium-card__stat">
-          <span className="customer-premium-card__stat-icon customer-premium-card__stat-icon--orders" aria-hidden />
+          <Package
+            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--orders"
+            size={15}
+            strokeWidth={2.25}
+            aria-hidden
+          />
           <span className="customer-premium-card__stat-label">Orders:</span>
           <span className="customer-premium-card__stat-value">{totalOrders}</span>
         </span>
         <span className="customer-premium-card__stat">
-          <span className="customer-premium-card__stat-icon customer-premium-card__stat-icon--total" aria-hidden />
+          <IndianRupee
+            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--total"
+            size={15}
+            strokeWidth={2.25}
+            aria-hidden
+          />
           <span className="customer-premium-card__stat-label">Total:</span>
           <span className="customer-premium-card__stat-rupee">{formatRupee(totalSpent)}</span>
         </span>
@@ -61,7 +72,12 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
 
       <div className="customer-premium-card__lower">
         <p className="customer-premium-card__since">
-          <span className="customer-premium-card__cal" aria-hidden />
+          <CalendarDays
+            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--since"
+            size={14}
+            strokeWidth={2.1}
+            aria-hidden
+          />
           <span className="customer-premium-card__since-label">Since:</span>
           <span className="customer-premium-card__since-val">{since}</span>
         </p>

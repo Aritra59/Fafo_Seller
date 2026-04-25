@@ -7,8 +7,6 @@ import { PhoneSignIn } from '../components/PhoneSignIn';
 import { ShopCodeAuth } from '../components/auth/ShopCodeAuth';
 import { clearDemoExplorer } from '../constants/demoMode';
 import { resolvePostLoginPath } from '../services/postLoginRedirect';
-import { PublicHomeAdSection } from '../components/ads/PublicHomeAdSection';
-
 const TITLE_ID = 'auth-modal-title';
 
 export function Login() {
@@ -188,10 +186,6 @@ export function Login() {
           >
             {tab === 'shop' && <ShopCodeAuth />}
           </div>
-        </div>
-
-        <div className="auth-landing-ad" style={{ marginTop: '1rem' }}>
-          <PublicHomeAdSection />
         </div>
       </AuthModal>
     </div>

@@ -6,8 +6,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useSeller } from '../hooks/useSeller';
 import { logoutSeller } from '../services/logoutSeller';
 import { getSellerStatusBadge } from '../services/sellerHelpers';
+import { X } from 'lucide-react';
+import { SellerPageTitleProvider } from '../context/SellerPageTitleContext';
 import { NomadLogo } from './NomadLogo';
 import { PwaInstallBanner } from './PwaInstallBanner';
+import { SellerTopbar } from './SellerTopbar';
 
 const DRAWER_LINKS = [
   { to: '/dashboard', label: 'Dashboard' },
@@ -86,71 +89,20 @@ export function Layout() {
   }
 
   return (
-    <div className="app-shell app-shell--seller">
-      {showSellerNav ? (
-        <>
-          <header className="seller-topbar">
-            <button
-              type="button"
-              className="seller-topbar__iconbtn seller-topbar__menu"
-              onClick={() => setDrawer(true)}
-              aria-label="Open menu"
-            >
-              <span className="seller-ico-burger" aria-hidden />
-            </button>
-            <div className="seller-topbar__title">
-              <span className="seller-topbar__logomark">
-                <NomadLogo size={34} decorative />
-              </span>
-              <div className="seller-topbar__brandcol">
-                <div className="seller-topbar__name-row">
-                  <span className="seller-topbar__product">FaFo</span>
-                  {headerStatusBadge ? (
-                    <span
-                      className={headerStatusBadge.className}
-                      title="Shop account status"
-                      aria-label={`Shop status: ${headerStatusBadge.label}`}
-                    >
-                      {headerStatusBadge.label}
-                    </span>
-                  ) : null}
-                </div>
-                {showShopSub ? (
-                  <span className="seller-topbar__shop" title={shopLabel}>
-                    {shopLabel}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <Link to="/settings" className="seller-topbar__gear" aria-label="Settings">
-              <svg
-                className="seller-ico-settings"
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden
-              >
-                <path
-                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="3"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                />
-              </svg>
-            </Link>
-          </header>
+    <SellerPageTitleProvider>
+      <div className="app-shell app-shell--seller">
+        {showSellerNav ? (
+          <>
+            <SellerTopbar
+              demoExplore={demoExplore}
+              headerStatusBadge={headerStatusBadge}
+              shopLabel={shopLabel}
+              showShopSub={showShopSub}
+              onOpenDrawer={() => setDrawer(true)}
+              onExitDemo={handleExitDemo}
+            />
 
-          {drawer ? (
+            {drawer ? (
             <div
               className="seller-drawer-backdrop is-open"
               onClick={() => setDrawer(false)}
@@ -180,7 +132,7 @@ export function Layout() {
                 onClick={() => setDrawer(false)}
                 aria-label="Close menu"
               >
-                ×
+                <X size={22} strokeWidth={2.1} aria-hidden />
               </button>
             </div>
             <nav className="seller-drawer__nav" aria-label="App sections">
@@ -222,17 +174,13 @@ export function Layout() {
         </header>
       )}
 
-      <main className="app-main app-main--seller">
-        {demoExplore ? (
-          <div className="demo-mode-banner" role="status">
-            Demo mode: sample data only. Writing to the network is off.
+        <main className="app-main app-main--seller">
+          {(user || hasSellerCodeSession()) && !isLanding && !demoExplore ? <PwaInstallBanner /> : null}
+          <div className="app-main__scroll">
+            <Outlet />
           </div>
-        ) : null}
-        {(user || hasSellerCodeSession()) && !isLanding && !demoExplore ? <PwaInstallBanner /> : null}
-        <div className="app-main__scroll">
-          <Outlet />
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
+    </SellerPageTitleProvider>
   );
 }

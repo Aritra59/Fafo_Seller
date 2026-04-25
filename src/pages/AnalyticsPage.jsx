@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSeller } from '../hooks/useSeller';
 import { isDemoExplorer } from '../constants/demoMode';
+import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import {
   buildGrowthCardLines,
   buildInsightLines,
@@ -45,6 +46,7 @@ function countedInRange(orders, range) {
 
 export function AnalyticsPage() {
   const { sellerId, loading, error } = useSeller();
+  const demoExplore = isDemoExplorer();
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
 
@@ -55,10 +57,12 @@ export function AnalyticsPage() {
   const [mainTab, setMainTab] = useState(/** @type {'shop' | 'menu' | 'customer'} */ ('shop'));
   const [menuSub, setMenuSub] = useState('all');
   const [customerSub, setCustomerSub] = useState('all');
+  const [userRows, setUserRows] = useState([]);
+
+  const mainScopeLabel = mainTab === 'shop' ? 'Shop' : mainTab === 'menu' ? 'Menu' : 'Customer';
+  useRegisterPageTitleSuffix(mainScopeLabel);
 
   const ranges = useMemo(() => getRangesForPeriod(period), [period]);
-
-  const [userRows, setUserRows] = useState([]);
 
   useEffect(() => {
     const sid = sellerId && String(sellerId).trim();
@@ -264,9 +268,6 @@ export function AnalyticsPage() {
   if (!sellerId) {
     return (
       <div className="analytics-page">
-        <h1 className="analytics-h1" style={{ margin: '0 0 0.35rem' }}>
-          Analytics
-        </h1>
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
           {loading ? 'Loading your shop…' : 'Set up your shop to see analytics.'}
         </p>
@@ -276,15 +277,12 @@ export function AnalyticsPage() {
 
   return (
     <div className="analytics-page">
-      <h1 className="analytics-h1" style={{ margin: '0 0 0.35rem' }}>
-        Analytics
-      </h1>
       {error ? (
         <p className="error" style={{ margin: '0 0 0.5rem' }} role="alert">
           {error.message}
         </p>
       ) : null}
-      {isDemoExplorer() ? (
+      {demoExplore ? (
         <p
           className="muted"
           style={{ fontSize: '0.75rem', margin: '0 0 0.5rem' }}
@@ -293,6 +291,7 @@ export function AnalyticsPage() {
         </p>
       ) : null}
 
+      <fieldset className="fieldset-reset" disabled={demoExplore}>
       {empty && !error ? (
         <div
           className="analytics-data-empty-hint"
@@ -460,6 +459,7 @@ export function AnalyticsPage() {
           <InsightSection title="Relationship signals" lines={lines} />
         </>
       )}
+      </fieldset>
 
     </div>
   );

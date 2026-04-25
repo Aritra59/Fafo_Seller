@@ -134,6 +134,9 @@ export async function uploadProductImageJpeg(sellerId, productId, jpegBlob, onPr
 
 export const COMBO_IMAGE_PATH = (sellerId, comboId) => `combos/${sellerId}/${comboId}.jpg`;
 
+export const COMBO_IMAGE_PATH_AT = (sellerId, comboId, index) =>
+  `combos/${sellerId}/${comboId}_${Number(index)}.jpg`;
+
 export async function uploadComboImageJpeg(sellerId, comboId, jpegBlob, onProgress) {
   const sid = String(sellerId ?? '').trim();
   const cid = String(comboId ?? '').trim();
@@ -141,6 +144,19 @@ export async function uploadComboImageJpeg(sellerId, comboId, jpegBlob, onProgre
     throw new Error('Missing seller or combo.');
   }
   const r = ref(storage, COMBO_IMAGE_PATH(sid, cid));
+  const task = uploadBytesResumable(r, jpegBlob, { contentType: 'image/jpeg' });
+  return trackTask(task, onProgress);
+}
+
+/** Extra combo gallery images (`combos/{sellerId}/{comboId}_0.jpg`, …). */
+export async function uploadComboImageJpegAt(sellerId, comboId, index, jpegBlob, onProgress) {
+  const sid = String(sellerId ?? '').trim();
+  const cid = String(comboId ?? '').trim();
+  const i = Number(index);
+  if (!sid || !cid || !Number.isFinite(i) || i < 0) {
+    throw new Error('Missing seller, combo, or image index.');
+  }
+  const r = ref(storage, COMBO_IMAGE_PATH_AT(sid, cid, i));
   const task = uploadBytesResumable(r, jpegBlob, { contentType: 'image/jpeg' });
   return trackTask(task, onProgress);
 }

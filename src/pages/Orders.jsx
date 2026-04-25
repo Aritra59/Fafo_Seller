@@ -1,16 +1,34 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Plus, X } from 'lucide-react';
+import { subscribeMenuGroupsBySellerId } from '../services/menuGroupsService';
 import { isDemoExplorer } from '../constants/demoMode';
+import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import { OrderDetailsModal } from '../components/OrderDetailsModal';
 import { useSeller } from '../hooks/useSeller';
 import { lineItemCount } from '../services/customerService';
 import {
   createQuickOrder,
   patchOrder,
+  subscribeCombosBySellerId,
+  subscribeGlobalCuisineCategories,
+  subscribeGlobalMenuCategories,
   subscribeOrdersBySellerId,
   subscribeProductsBySellerId,
   updateOrderStatus,
 } from '../services/firestore';
+import { normalizeComboProductIds } from '../components/menu/ComboCollageMedia';
+import {
+  cuisineFilterKey,
+  cuisineFilterLabel,
+  menuFilterKey,
+  menuFilterLabel,
+} from '../utils/productCatalogFilters';
+import {
+  combosForStorefrontSession,
+  productsForStorefrontSession,
+  resolveActiveMenuGroupForSeller,
+} from '../utils/storefrontSessionBrowse';
 
 const TABS = [
   { id: 'new', label: 'New' },
@@ -144,6 +162,16 @@ function orderTotal(order) {
 function formatRupee(n) {
   if (n == null) return '—';
   return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function browseProductName(p) {
+  const n = p?.name ?? p?.title;
+  return typeof n === 'string' && n.trim() ? n.trim() : 'Item';
+}
+
+function browseComboName(c) {
+  const n = c?.name ?? c?.title;
+  return typeof n === 'string' && n.trim() ? n.trim() : 'Combo';
 }
 
 function formatCreatedParts(ts) {
@@ -360,15 +388,24 @@ export function Orders() {
   const [actionError, setActionError] = useState(null);
   const [quickBuyerName, setQuickBuyerName] = useState('');
   const [quickBuyerPhone, setQuickBuyerPhone] = useState('');
-  const [quickTotal, setQuickTotal] = useState('');
   const [quickPayment, setQuickPayment] = useState('cash');
   const [quickBusy, setQuickBusy] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const demoReadOnly = isDemoExplorer();
+  const ordersTabLabel = TABS.find((t) => t.id === tab)?.label ?? '';
+  useRegisterPageTitleSuffix(ordersTabLabel);
   const [acceptByOrder, setAcceptByOrder] = useState({});
   const [productRows, setProductRows] = useState([]);
-  const [quickLines, setQuickLines] = useState([{ productId: '', qty: '1' }]);
+  const [comboRows, setComboRows] = useState([]);
+  const [menuRows, setMenuRows] = useState([]);
+  const [quickCuisineKey, setQuickCuisineKey] = useState('');
+  const [quickMenuKey, setQuickMenuKey] = useState('');
+  const [menuClock, setMenuClock] = useState(() => Date.now());
+  const [globalCuisines, setGlobalCuisines] = useState([]);
+  const [globalMenus, setGlobalMenus] = useState([]);
+  const [quickCartP, setQuickCartP] = useState({});
+  const [quickCartC, setQuickCartC] = useState({});
   const [quickAddress, setQuickAddress] = useState('');
 
   const selectedOrder = useMemo(
@@ -423,13 +460,172 @@ export function Orders() {
     return () => unsub();
   }, [sellerId]);
 
+  useEffect(() => {
+    if (!sellerId) {
+      setComboRows([]);
+      return undefined;
+    }
+    return subscribeCombosBySellerId(
+      sellerId,
+      (rows) => setComboRows(rows),
+      () => setComboRows([]),
+    );
+  }, [sellerId]);
+
+  useEffect(() => {
+    if (!sellerId) {
+      setMenuRows([]);
+      return undefined;
+    }
+    return subscribeMenuGroupsBySellerId(
+      sellerId,
+      (rows) => setMenuRows(rows || []),
+      () => setMenuRows([]),
+    );
+  }, [sellerId]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setMenuClock(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const u1 = subscribeGlobalCuisineCategories(
+      (rows) => setGlobalCuisines(Array.isArray(rows) ? rows : []),
+      () => setGlobalCuisines([]),
+    );
+    const u2 = subscribeGlobalMenuCategories(
+      (rows) => setGlobalMenus(Array.isArray(rows) ? rows : []),
+      () => setGlobalMenus([]),
+    );
+    return () => {
+      u1();
+      u2();
+    };
+  }, []);
+
+  const activeMenu = useMemo(
+    () =>
+      seller
+        ? resolveActiveMenuGroupForSeller({
+            seller,
+            menuGroupRows: menuRows,
+            now: new Date(menuClock),
+          })
+        : null,
+    [seller, menuRows, menuClock],
+  );
+
+  const sessionMenuLabel = useMemo(() => {
+    if (activeMenu) {
+      return String(activeMenu.name || activeMenu.menuName || 'Menu').trim() || 'Menu';
+    }
+    return 'All menus';
+  }, [activeMenu]);
+
+  const sessionProducts = useMemo(
+    () => productsForStorefrontSession(activeMenu, menuRows, productRows),
+    [activeMenu, menuRows, productRows],
+  );
+
+  const sessionCombosBase = useMemo(
+    () => combosForStorefrontSession(activeMenu, menuRows, comboRows),
+    [activeMenu, menuRows, comboRows],
+  );
+
+  const cuisineChips = useMemo(() => {
+    const map = new Map();
+    for (const p of sessionProducts) {
+      const k = cuisineFilterKey(p);
+      const lab = cuisineFilterLabel(p, globalCuisines);
+      if (!lab) continue;
+      if (!map.has(k)) map.set(k, lab);
+    }
+    return [...map.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  }, [sessionProducts, globalCuisines]);
+
+  const menuChips = useMemo(() => {
+    let rows = sessionProducts;
+    if (quickCuisineKey) {
+      rows = rows.filter((p) => cuisineFilterKey(p) === quickCuisineKey);
+    }
+    const map = new Map();
+    for (const p of rows) {
+      const k = menuFilterKey(p);
+      const lab = menuFilterLabel(p, globalMenus);
+      if (!lab) continue;
+      if (!map.has(k)) map.set(k, lab);
+    }
+    return [...map.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  }, [sessionProducts, quickCuisineKey, globalMenus]);
+
+  const browseProducts = useMemo(() => {
+    let rows = sessionProducts;
+    if (quickCuisineKey) {
+      rows = rows.filter((p) => cuisineFilterKey(p) === quickCuisineKey);
+    }
+    if (quickMenuKey) {
+      rows = rows.filter((p) => menuFilterKey(p) === quickMenuKey);
+    }
+    return rows;
+  }, [sessionProducts, quickCuisineKey, quickMenuKey]);
+
+  const browseCombos = useMemo(() => {
+    const byId = new Map(productRows.map((p) => [p.id, p]));
+    return sessionCombosBase.filter((c) => {
+      const ids = normalizeComboProductIds(c);
+      return ids.some((id) => {
+        const p = byId.get(String(id).trim());
+        if (!p) return false;
+        if (quickCuisineKey && cuisineFilterKey(p) !== quickCuisineKey) return false;
+        if (quickMenuKey && menuFilterKey(p) !== quickMenuKey) return false;
+        return true;
+      });
+    });
+  }, [sessionCombosBase, productRows, quickCuisineKey, quickMenuKey]);
+
+  const quickCartTotal = useMemo(() => {
+    let sum = 0;
+    for (const [pidRaw, qRaw] of Object.entries(quickCartP)) {
+      const pid = String(pidRaw).trim();
+      const qty = Number(qRaw);
+      if (!pid || !Number.isFinite(qty) || qty <= 0) continue;
+      const p = productRows.find((x) => x.id === pid);
+      const unit = p != null ? Number(p.price) : NaN;
+      if (Number.isFinite(unit) && unit >= 0) sum += unit * qty;
+    }
+    for (const [cidRaw, qRaw] of Object.entries(quickCartC)) {
+      const cid = String(cidRaw).trim();
+      const qty = Number(qRaw);
+      if (!cid || !Number.isFinite(qty) || qty <= 0) continue;
+      const c = comboRows.find((x) => x.id === cid);
+      const unit = c != null ? Number(c.price) : NaN;
+      if (Number.isFinite(unit) && unit >= 0) sum += unit * qty;
+    }
+    return sum;
+  }, [quickCartP, quickCartC, productRows, comboRows]);
+
   const filtered = useMemo(
     () => orders.filter((o) => orderMatchesTab(o, tab)),
     [orders, tab],
   );
 
-  const openQuick = useCallback(() => setQuickOpen(true), []);
-  const closeQuick = useCallback(() => setQuickOpen(false), []);
+  const openQuick = useCallback(() => {
+    setQuickCuisineKey('');
+    setQuickMenuKey('');
+    setQuickCartP({});
+    setQuickCartC({});
+    setQuickOpen(true);
+  }, []);
+  const closeQuick = useCallback(() => {
+    setQuickOpen(false);
+    setQuickCartP({});
+    setQuickCartC({});
+  }, []);
 
   async function handleConfirmOrder(orderId) {
     if (!sellerId || !acceptByOrder[orderId]) return;
@@ -507,18 +703,26 @@ export function Orders() {
     openWhatsAppWithBody(order, body);
   }
 
-  function addQuickLine() {
-    setQuickLines((prev) => [...prev, { productId: '', qty: '1' }]);
+  function bumpProductCart(id, delta) {
+    setQuickCartP((prev) => {
+      const cur = Number(prev[id]) || 0;
+      const next = Math.max(0, cur + delta);
+      const copy = { ...prev };
+      if (next <= 0) delete copy[id];
+      else copy[id] = next;
+      return copy;
+    });
   }
 
-  function updateQuickLine(idx, patch) {
-    setQuickLines((prev) =>
-      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
-    );
-  }
-
-  function removeQuickLine(idx) {
-    setQuickLines((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
+  function bumpComboCart(id, delta) {
+    setQuickCartC((prev) => {
+      const cur = Number(prev[id]) || 0;
+      const next = Math.max(0, cur + delta);
+      const copy = { ...prev };
+      if (next <= 0) delete copy[id];
+      else copy[id] = next;
+      return copy;
+    });
   }
 
   async function handleQuickOrder(e) {
@@ -529,27 +733,37 @@ export function Orders() {
     try {
       const name = quickBuyerName.trim();
       const phone = quickBuyerPhone.trim();
-      const total = Number(quickTotal);
       if (!name) throw new Error('Buyer name is required.');
       if (!phone) throw new Error('Buyer phone is required.');
-      if (!Number.isFinite(total) || total < 0) throw new Error('Enter a valid total.');
 
       const items = [];
-      let computed = 0;
-      for (const line of quickLines) {
-        const pid = String(line.productId ?? '').trim();
-        const qty = Number(line.qty);
-        if (!pid) continue;
-        if (!Number.isFinite(qty) || qty <= 0) throw new Error('Each line needs a valid quantity.');
+      for (const [pidRaw, qRaw] of Object.entries(quickCartP)) {
+        const pid = String(pidRaw).trim();
+        const qty = Number(qRaw);
+        if (!pid || !Number.isFinite(qty) || qty <= 0) continue;
         const p = productRows.find((x) => x.id === pid);
         const unit = p != null ? Number(p.price) : NaN;
-        if (!Number.isFinite(unit) || unit < 0) throw new Error('Invalid product selection.');
+        if (!Number.isFinite(unit) || unit < 0) throw new Error('Invalid item selection.');
         const label = String(p.name ?? p.title ?? 'Item').trim() || 'Item';
         items.push({ productId: pid, name: label, qty, price: unit });
-        computed += unit * qty;
+      }
+      for (const [cidRaw, qRaw] of Object.entries(quickCartC)) {
+        const cid = String(cidRaw).trim();
+        const qty = Number(qRaw);
+        if (!cid || !Number.isFinite(qty) || qty <= 0) continue;
+        const c = comboRows.find((x) => x.id === cid);
+        const unit = c != null ? Number(c.price) : NaN;
+        if (!Number.isFinite(unit) || unit < 0) throw new Error('Invalid combo selection.');
+        const label = String(c.name ?? c.title ?? 'Combo').trim() || 'Combo';
+        items.push({ comboId: cid, name: label, qty, price: unit });
       }
       if (items.length === 0) {
-        throw new Error('Select at least one menu item.');
+        throw new Error('Add at least one item or combo from the menu below.');
+      }
+
+      const total = quickCartTotal;
+      if (!Number.isFinite(total) || total <= 0) {
+        throw new Error('Order total must be greater than zero.');
       }
 
       await createQuickOrder(sellerId, {
@@ -557,14 +771,14 @@ export function Orders() {
         buyerPhone: phone,
         buyerAddress: quickAddress.trim() || undefined,
         items,
-        total: Number.isFinite(total) && total > 0 ? total : computed,
+        total,
         paymentMode: quickPayment,
       });
       setQuickBuyerName('');
       setQuickBuyerPhone('');
       setQuickAddress('');
-      setQuickLines([{ productId: '', qty: '1' }]);
-      setQuickTotal('');
+      setQuickCartP({});
+      setQuickCartC({});
       setQuickPayment('cash');
       setQuickOpen(false);
       setTab('preparing');
@@ -601,7 +815,6 @@ export function Orders() {
   if (!seller) {
     return (
       <div className="orders-page card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Orders</h1>
         <p className="muted" style={{ margin: 0 }}>
           Set up your shop to see orders.
         </p>
@@ -614,21 +827,6 @@ export function Orders() {
 
   return (
     <div className="orders-page orders-page--pos">
-      <header className="orders-page-header orders-page-header--title-row">
-        <h1 className="orders-page-title" style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          Orders
-        </h1>
-        <button
-          type="button"
-          className="orders-quick-header-btn btn btn-primary"
-          onClick={openQuick}
-          aria-haspopup="dialog"
-          aria-expanded={quickOpen}
-        >
-          + Quick order
-        </button>
-      </header>
-
       <div className="orders-page-tabs" role="tablist" aria-label="Order status">
         {TABS.map((t) => (
           <button
@@ -685,6 +883,19 @@ export function Orders() {
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
 
+      {!demoReadOnly ? (
+        <button
+          type="button"
+          className="orders-quick-fab"
+          onClick={openQuick}
+          aria-haspopup="dialog"
+          aria-expanded={quickOpen}
+          aria-label="Quick order"
+        >
+          <Plus size={26} strokeWidth={2.25} aria-hidden />
+        </button>
+      ) : null}
+
       {quickOpen ? (
         <div className="orders-quick-overlay" role="presentation">
           <button
@@ -694,7 +905,7 @@ export function Orders() {
             onClick={closeQuick}
           />
           <div
-            className="orders-quick-sheet card"
+            className="orders-quick-sheet orders-quick-sheet--browse card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="orders-quick-title"
@@ -703,9 +914,11 @@ export function Orders() {
               <h2 id="orders-quick-title" style={{ margin: 0, fontSize: '1.1rem' }}>
                 Quick order
               </h2>
-              <button type="button" className="btn btn-ghost" onClick={closeQuick} aria-label="Close">
-                ✕
-              </button>
+              {!demoReadOnly ? (
+                <button type="button" className="btn btn-ghost" onClick={closeQuick} aria-label="Close">
+                  <X size={20} strokeWidth={2.1} aria-hidden />
+                </button>
+              ) : null}
             </div>
             <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.875rem' }}>
               Creates a walk-in order in <strong>Preparing</strong> (skips New).
@@ -750,65 +963,153 @@ export function Orders() {
                     />
                   </label>
                 </div>
-                <div className="stack" style={{ gap: '0.65rem' }}>
-                  <span className="orders-quick-label">Menu items</span>
-                  {quickLines.map((line, idx) => (
-                    <div className="orders-quick-row" key={`ql-${idx}`}>
-                      <label className="orders-quick-field orders-quick-field--grow">
-                        <span className="sr-only">Product</span>
-                        <select
-                          className="input"
-                          value={line.productId}
-                          onChange={(ev) => updateQuickLine(idx, { productId: ev.target.value })}
-                          required={idx === 0}
-                        >
-                          <option value="">Select product…</option>
-                          {productRows.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {String(p.name ?? p.title ?? p.id)} — ₹{Number(p.price ?? 0)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="orders-quick-field">
-                        <span className="sr-only">Qty</span>
-                        <input
-                          className="input"
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={line.qty}
-                          onChange={(ev) => updateQuickLine(idx, { qty: ev.target.value })}
-                          aria-label="Quantity"
-                        />
-                      </label>
+                <div className="orders-quick-browse" role="region" aria-label="Pick items like your buyer menu">
+                  <p className="muted" style={{ margin: '0 0 0.5rem', fontSize: '0.8125rem' }}>
+                    Active menu session: <strong>{sessionMenuLabel}</strong>
+                  </p>
+                  <p
+                    className="muted"
+                    style={{
+                      margin: '0.35rem 0 0.25rem',
+                      fontSize: '0.65rem',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                    }}
+                  >
+                    Cuisine
+                  </p>
+                  <div className="orders-quick-browse-tabs" role="tablist" aria-label="Cuisine filter">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!quickCuisineKey}
+                      className={`orders-quick-browse-tab${!quickCuisineKey ? ' orders-quick-browse-tab--active' : ''}`}
+                      onClick={() => {
+                        setQuickCuisineKey('');
+                        setQuickMenuKey('');
+                      }}
+                    >
+                      All
+                    </button>
+                    {cuisineChips.map((t) => (
                       <button
+                        key={t.value}
                         type="button"
-                        className="btn btn-ghost"
-                        onClick={() => removeQuickLine(idx)}
-                        disabled={quickLines.length <= 1}
+                        role="tab"
+                        aria-selected={quickCuisineKey === t.value}
+                        className={`orders-quick-browse-tab${quickCuisineKey === t.value ? ' orders-quick-browse-tab--active' : ''}`}
+                        onClick={() => {
+                          setQuickCuisineKey(t.value);
+                          setQuickMenuKey('');
+                        }}
                       >
-                        Remove
+                        {t.label}
                       </button>
-                    </div>
-                  ))}
-                  <button type="button" className="btn btn-ghost" onClick={addQuickLine}>
-                    + Add line
-                  </button>
+                    ))}
+                  </div>
+                  <p
+                    className="muted"
+                    style={{
+                      margin: '0.65rem 0 0.25rem',
+                      fontSize: '0.65rem',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                    }}
+                  >
+                    Menu category
+                  </p>
+                  <div className="orders-quick-browse-tabs" role="tablist" aria-label="Menu category filter">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!quickMenuKey}
+                      className={`orders-quick-browse-tab${!quickMenuKey ? ' orders-quick-browse-tab--active' : ''}`}
+                      onClick={() => setQuickMenuKey('')}
+                    >
+                      All
+                    </button>
+                    {menuChips.map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={quickMenuKey === t.value}
+                        className={`orders-quick-browse-tab${quickMenuKey === t.value ? ' orders-quick-browse-tab--active' : ''}`}
+                        onClick={() => setQuickMenuKey(t.value)}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="orders-quick-browse-scroll">
+                    <h3 className="orders-quick-browse-heading">Items</h3>
+                    <ul className="orders-quick-menu-grid">
+                      {browseProducts.map((p) => {
+                        const img =
+                          typeof p.imageUrl === 'string' && p.imageUrl.trim()
+                            ? p.imageUrl.trim()
+                            : typeof p.image === 'string' && p.image.trim()
+                              ? p.image.trim()
+                              : '';
+                        const unit = Number(p.price);
+                        const q = Number(quickCartP[p.id]) || 0;
+                        return (
+                          <li key={p.id}>
+                            <article className="orders-quick-menu-card">
+                              <div className="orders-quick-menu-card__media">
+                                {img ? <img src={img} alt="" loading="lazy" /> : <span className="muted">No image</span>}
+                              </div>
+                              <div className="orders-quick-menu-card__body">
+                                <p className="orders-quick-menu-card__name">{browseProductName(p)}</p>
+                                <p className="orders-quick-menu-card__price">{formatRupee(Number.isFinite(unit) ? unit : null)}</p>
+                                <div className="orders-quick-menu-card__qty">
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={() => bumpProductCart(p.id, -1)}>
+                                    −
+                                  </button>
+                                  <span className="orders-quick-menu-card__qty-val">{q}</span>
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={() => bumpProductCart(p.id, 1)}>
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <h3 className="orders-quick-browse-heading">Combos</h3>
+                    <ul className="orders-quick-menu-grid">
+                      {browseCombos.map((c) => {
+                        const unit = Number(c.price);
+                        const q = Number(quickCartC[c.id]) || 0;
+                        return (
+                          <li key={c.id}>
+                            <article className="orders-quick-menu-card">
+                              <div className="orders-quick-menu-card__body">
+                                <p className="orders-quick-menu-card__name">{browseComboName(c)}</p>
+                                <p className="orders-quick-menu-card__price">{formatRupee(Number.isFinite(unit) ? unit : null)}</p>
+                                <div className="orders-quick-menu-card__qty">
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={() => bumpComboCart(c.id, -1)}>
+                                    −
+                                  </button>
+                                  <span className="orders-quick-menu-card__qty-val">{q}</span>
+                                  <button type="button" className="btn btn-ghost btn--sm" onClick={() => bumpComboCart(c.id, 1)}>
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 </div>
-                <div className="orders-quick-row">
-                  <label className="orders-quick-field">
-                    <span className="orders-quick-label">Total (₹)</span>
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={quickTotal}
-                      onChange={(ev) => setQuickTotal(ev.target.value)}
-                      placeholder="Leave 0 to auto-sum lines"
-                    />
-                  </label>
+                <div className="orders-quick-row orders-quick-row--total">
+                  <p className="orders-quick-total-line" style={{ margin: 0 }}>
+                    <span className="orders-quick-label">Total</span>{' '}
+                    <strong className="orders-quick-total-amt">{formatRupee(quickCartTotal)}</strong>
+                  </p>
                   <label className="orders-quick-field">
                     <span className="orders-quick-label">Payment</span>
                     <select

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import QRCode from 'qrcode';
 import { DashboardAdSection } from '../components/ads/DashboardAdSection';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useAuth } from '../hooks/useAuth';
 import { useSeller } from '../hooks/useSeller';
 import { getBuyerPhone, getOrderTimeMs } from '../services/analyticsService';
-import { listMenuGroups } from '../services/menuGroupsService';
+import { subscribeMenuGroupsBySellerId } from '../services/menuGroupsService';
 import {
   subscribeOrdersBySellerId,
   subscribeProductsBySellerId,
@@ -22,9 +23,11 @@ import {
   isShopOpenNow,
   isTrialEndingSoon,
   resolveEffectiveSellerMode,
-  resolveShopOpenNow,
   TRIAL_ENDING_DAYS_THRESHOLD,
 } from '../services/sellerHelpers';
+import { pickScheduledMenu } from '../utils/menuSchedule';
+import { normalizeShopCode } from '../utils/shopCode';
+import { publicShopByCodeUrl, publicShopQrTargetUrl, publicShopShareUrl } from '../utils/publicShopUrl';
 
 function normalizeOrderStatus(status) {
   return String(status ?? '').trim().toLowerCase();
@@ -104,44 +107,111 @@ function lowStockCount(products) {
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const { user } = useAuth();
-  const { seller, sellerId, loading, error } = useSeller();
+  const { seller, sellerId, loading, error, reload } = useSeller();
   const [orderRows, setOrderRows] = useState([]);
   const [productRows, setProductRows] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(true);
   const [toggleBusy, setToggleBusy] = useState(false);
   const [menuGroupRows, setMenuGroupRows] = useState(/** @type {any[]} */ ([]));
+  const [clockTick, setClockTick] = useState(() => Date.now());
+  const [sessionModal, setSessionModal] = useState(false);
+  const [shareModal, setShareModal] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [copyDone, setCopyDone] = useState(false);
+  const demoExplore = isDemoExplorer();
 
   useEffect(() => {
     if (!sellerId) {
       setMenuGroupRows([]);
       return undefined;
     }
+    return subscribeMenuGroupsBySellerId(
+      sellerId,
+      (rows) => setMenuGroupRows(rows || []),
+      () => setMenuGroupRows([]),
+    );
+  }, [sellerId]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setClockTick(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const shopCodeNorm = useMemo(
+    () => normalizeShopCode(seller?.shopCode ?? seller?.code ?? ''),
+    [seller?.shopCode, seller?.code],
+  );
+  const shareLink = useMemo(() => (shopCodeNorm ? publicShopShareUrl(shopCodeNorm) : ''), [shopCodeNorm]);
+
+  useEffect(() => {
+    if (shareModal !== 'qr' || !shopCodeNorm) {
+      setQrDataUrl('');
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
       try {
-        const rows = await listMenuGroups(sellerId);
-        if (!cancelled) setMenuGroupRows(rows || []);
+        const url = await QRCode.toDataURL(publicShopQrTargetUrl(shopCodeNorm), {
+          margin: 2,
+          width: 280,
+          color: { dark: '#0c0e12ff', light: '#ffffffff' },
+        });
+        if (!cancelled) setQrDataUrl(url);
       } catch {
-        if (!cancelled) setMenuGroupRows([]);
+        if (!cancelled) setQrDataUrl('');
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [sellerId]);
+  }, [shareModal, shopCodeNorm]);
 
-  const sessionOptions = useMemo(() => {
-    const all = { value: 'All Day', label: 'All Day' };
-    const fromGroups = (menuGroupRows || [])
-      .filter((g) => g.active !== false)
-      .map((g) => {
-        const label = String(g.name || g.menuName || '').trim() || g.id;
-        return { value: label, label };
-      });
-    return [all, ...fromGroups];
-  }, [menuGroupRows]);
+  const scheduledMenuNow = useMemo(
+    () => pickScheduledMenu(menuGroupRows, new Date(clockTick)),
+    [menuGroupRows, clockTick],
+  );
+
+  const menuSessionDisplay = useMemo(() => {
+    const rowName = (gidRaw) => {
+      if (gidRaw == null || String(gidRaw).trim() === '') return '';
+      const gid = String(gidRaw).trim();
+      const g = menuGroupRows.find((m) => String(m.id).trim() === gid);
+      if (!g) return '';
+      return String(g.name || g.menuName || '').trim() || 'Menu';
+    };
+
+    const oidRaw = seller?.menuSessionOverrideGroupId;
+    if (oidRaw != null && String(oidRaw).trim() !== '') {
+      const fromRow = rowName(oidRaw);
+      if (fromRow) return fromRow;
+      const saved = String(seller?.menuSession ?? '').trim();
+      if (saved) return saved;
+    }
+
+    const sfRaw = seller?.storefrontMenuGroupId;
+    if (sfRaw != null && String(sfRaw).trim() !== '') {
+      const fromStorefront = rowName(sfRaw);
+      if (fromStorefront) return fromStorefront;
+    }
+
+    if (scheduledMenuNow) {
+      return String(scheduledMenuNow.name || scheduledMenuNow.menuName || '').trim() || 'Menu';
+    }
+    const savedFallback = String(seller?.menuSession ?? '').trim();
+    if (savedFallback) return savedFallback;
+    return 'All Day';
+  }, [
+    seller?.menuSessionOverrideGroupId,
+    seller?.storefrontMenuGroupId,
+    seller?.menuSession,
+    menuGroupRows,
+    scheduledMenuNow,
+  ]);
+
+  const hasManualMenuOverride = Boolean(seller?.menuSessionOverrideGroupId);
 
   useEffect(() => {
     if (!sellerId) {
@@ -192,28 +262,7 @@ export function Dashboard() {
 
   const openEffective = seller ? isShopOpenNow(seller) : null;
   const deliveryOn = seller ? seller.deliveryEnabled !== false : true;
-
-  const currentMenuSession = useMemo(() => {
-    const ms = seller?.menuSession;
-    if (typeof ms === 'string' && ms.trim()) {
-      return ms.trim();
-    }
-    const sw = String(seller?.servingWindow || 'allday')
-      .trim()
-      .toLowerCase();
-    if (sw === 'allday') return 'All Day';
-    if (sw === 'morning') return 'Morning';
-    if (sw === 'lunch') return 'Lunch';
-    if (sw === 'dinner') return 'Dinner';
-    return 'All Day';
-  }, [seller]);
-
-  const sessionLabel = useMemo(() => {
-    const found = sessionOptions.find((o) => o.value === currentMenuSession);
-    return found ? found.label : currentMenuSession;
-  }, [sessionOptions, currentMenuSession]);
-
-  const allowWrite = !isDemoExplorer();
+  const allowWrite = !demoExplore;
 
   const patchSeller = useCallback(
     async (fields) => {
@@ -234,14 +283,6 @@ export function Dashboard() {
     void patchSeller({ shopOpenManualMode: openEffective ? 'closed' : 'open' });
   };
 
-  const onCycleServing = () => {
-    if (sessionOptions.length === 0) return;
-    const idx = sessionOptions.findIndex((o) => o.value === currentMenuSession);
-    const i = idx < 0 ? 0 : idx;
-    const next = sessionOptions[(i + 1) % sessionOptions.length];
-    void patchSeller({ menuSession: next.value });
-  };
-
   const onToggleDelivery = () => {
     void patchSeller({ deliveryEnabled: !deliveryOn });
   };
@@ -254,7 +295,7 @@ export function Dashboard() {
   const trialActive = trialStatus === 'active';
   const trialExpired = trialStatus === 'expired';
   const endingSoon = seller && showTrialUi ? isTrialEndingSoon(seller) : false;
-  const goLiveDisabled = trialExpired || seller?.isBlocked === true;
+  const goLiveDisabled = seller?.isBlocked === true;
   const modeLabel = seller ? getSellerModeLabel(seller) : '—';
 
   const slotsCount = Number(seller?.slots ?? 0);
@@ -268,10 +309,87 @@ export function Dashboard() {
       : null;
   const alertParts = [];
   if (stats.pending > 0) alertParts.push(`${stats.pending} order(s) waiting`);
-  if (lowStock > 0) alertParts.push(`${lowStock} low stock`);
+  if (lowStock > 0) alertParts.push(`${lowStock} low availability`);
   if (liveNoSlotsWarning) alertParts.push(liveNoSlotsWarning);
   if (seller?.isBlocked) alertParts.push('Account blocked');
   const alertText = alertParts.length ? alertParts.join(' · ') : 'All clear';
+
+  async function applyMenuSessionChoice(choice) {
+    if (!seller?.id || !allowWrite) return;
+    if (choice === 'auto') {
+      const picked = pickScheduledMenu(menuGroupRows, new Date());
+      const nm = picked ? String(picked.name || picked.menuName || '').trim() : 'All Day';
+      const storefrontMenuGroupId = picked?.id ? String(picked.id).trim() : null;
+      await patchSeller({
+        menuSessionOverrideGroupId: null,
+        menuSession: nm,
+        storefrontMenuGroupId,
+      });
+    } else if (choice && typeof choice === 'object' && choice.id) {
+      const nm = String(choice.name || '').trim() || 'Menu';
+      const gid = String(choice.id).trim();
+      await patchSeller({
+        menuSessionOverrideGroupId: gid,
+        menuSession: nm,
+        storefrontMenuGroupId: gid,
+      });
+    }
+    setSessionModal(false);
+    reload();
+  }
+
+  useEffect(() => {
+    if (!seller?.id || demoExplore) return;
+    const overrideRaw = seller.menuSessionOverrideGroupId;
+    const hasOverride = overrideRaw != null && String(overrideRaw).trim() !== '';
+    const nextGroupId = hasOverride
+      ? String(overrideRaw).trim()
+      : scheduledMenuNow?.id
+        ? String(scheduledMenuNow.id).trim()
+        : null;
+    let nextName = 'All Day';
+    if (hasOverride && nextGroupId) {
+      const g = menuGroupRows.find((m) => String(m.id) === String(nextGroupId));
+      const savedLabel = String(seller.menuSession ?? '').trim();
+      nextName = g
+        ? String(g.name || g.menuName || '').trim() || 'Menu'
+        : savedLabel || 'Menu';
+    } else if (scheduledMenuNow) {
+      nextName = String(scheduledMenuNow.name || scheduledMenuNow.menuName || '').trim() || 'Menu';
+    }
+    const curRaw = seller.storefrontMenuGroupId;
+    const cur = curRaw != null && String(curRaw).trim() ? String(curRaw).trim() : null;
+    const curSession = String(seller.menuSession ?? '').trim();
+    const patch = {};
+    if (cur !== nextGroupId && (cur || nextGroupId)) {
+      patch.storefrontMenuGroupId = nextGroupId ?? null;
+    }
+    if (curSession !== nextName) {
+      patch.menuSession = nextName;
+    }
+    if (Object.keys(patch).length === 0) return;
+    void updateSellerDocument(seller.id, patch).catch(() => {});
+  }, [
+    seller?.id,
+    seller?.menuSessionOverrideGroupId,
+    seller?.storefrontMenuGroupId,
+    seller?.menuSession,
+    scheduledMenuNow,
+    menuGroupRows,
+    clockTick,
+    demoExplore,
+  ]);
+
+  async function handleCopyShopLink() {
+    if (!shareLink) return;
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setCopyDone(true);
+      window.setTimeout(() => setCopyDone(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  }
 
   if (loading) {
     return (
@@ -358,7 +476,7 @@ export function Dashboard() {
         </section>
       ) : null}
 
-      {showTrialUi && trialExpired && !slotsOk ? (
+      {showTrialUi && !demoExplore && trialExpired && !slotsOk ? (
         <section className="dashboard-strip card" style={{ marginBottom: '0.75rem' }} aria-live="polite">
           <p className="error" style={{ margin: 0, fontSize: '0.9rem' }}>
             Recharge to continue receiving orders
@@ -384,14 +502,12 @@ export function Dashboard() {
         </button>
         <button
           type="button"
-          className="dashboard-v2-pill"
-          onClick={onCycleServing}
+          className={`dashboard-v2-pill${hasManualMenuOverride ? ' dashboard-v2-pill--accent' : ''}`}
+          onClick={() => setSessionModal(true)}
           disabled={toggleBusy || !allowWrite}
         >
-          <span className="dashboard-v2-pill-label">Menu session</span>
-          <span className="dashboard-v2-pill-value">
-            {sessionLabel}
-          </span>
+          <span className="dashboard-v2-pill-label">MENU SESSION</span>
+          <span className="dashboard-v2-pill-value">{menuSessionDisplay}</span>
         </button>
         <button
           type="button"
@@ -403,6 +519,30 @@ export function Dashboard() {
           <span className="dashboard-v2-pill-value">{deliveryOn ? 'ACTIVE' : 'OFF'}</span>
         </button>
       </section>
+
+      {!demoExplore && shopCodeNorm ? (
+        <section className="dashboard-share card" aria-label="Share your shop">
+          <h2 className="dashboard-v2-section-title" style={{ marginTop: 0 }}>
+            Share menu
+          </h2>
+          <div className="dashboard-share__row">
+            <a
+              href={publicShopByCodeUrl(shopCodeNorm)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-primary dashboard-share__btn"
+            >
+              Open shop link
+            </a>
+            <button type="button" className="btn btn-ghost dashboard-share__btn" onClick={() => setShareModal('qr')}>
+              Show QR
+            </button>
+            <button type="button" className="btn btn-ghost dashboard-share__btn" onClick={() => void handleCopyShopLink()}>
+              {copyDone ? 'Copied' : 'Copy link'}
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="dashboard-v2-kpis" aria-label="Key metrics">
         <article className="dashboard-v2-kpi">
@@ -419,7 +559,7 @@ export function Dashboard() {
         </article>
       </section>
 
-      <DashboardAdSection />
+      {!demoExplore ? <DashboardAdSection /> : null}
 
       <section className="dashboard-v2-links" aria-label="Quick links">
         <h2 className="dashboard-v2-section-title">Quick links</h2>
@@ -444,32 +584,32 @@ export function Dashboard() {
           <li>
             <span className="muted">Revenue today</span>
             <strong>
-              {ordersLoading
-                ? '…'
-                : `₹${revenue.today.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+              {demoExplore ? '—' : ordersLoading ? '…' : `₹${revenue.today.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
             </strong>
           </li>
           <li>
             <span className="muted">Top item (7d)</span>
-            <strong>{ordersLoading ? '…' : topItem}</strong>
+            <strong>{demoExplore ? '—' : ordersLoading ? '…' : topItem}</strong>
           </li>
           <li>
             <span className="muted">Repeat customers (est.)</span>
-            <strong>{repeatPct == null ? '—' : `${repeatPct}%`}</strong>
+            <strong>{demoExplore ? '—' : repeatPct == null ? '—' : `${repeatPct}%`}</strong>
           </li>
           <li>
             <span className="muted">Pending / alerts</span>
             <strong className={stats.pending > 0 ? 'text-warn' : undefined}>{alertText}</strong>
           </li>
           <li>
-            <span className="muted">Low stock SKUs</span>
-            <strong>{productsLoading ? '…' : lowStock}</strong>
+            <span className="muted">Low availability</span>
+            <strong>{demoExplore ? '—' : productsLoading ? '…' : lowStock}</strong>
           </li>
         </ul>
-        <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.8rem' }}>
-          Status: {modeLabel}
-          {user?.phoneNumber ? ` · ${user.phoneNumber}` : null}
-        </p>
+        {!demoExplore ? (
+          <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.8rem' }}>
+            Status: {modeLabel}
+            {user?.phoneNumber ? ` · ${user.phoneNumber}` : null}
+          </p>
+        ) : null}
         <div style={{ marginTop: '0.5rem' }}>
           <Link to="/analytics" className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
             Full insights / Analytics
@@ -477,15 +617,29 @@ export function Dashboard() {
         </div>
       </section>
 
-      {showTrialUi ? (
+      {demoExplore ? (
+        <section className="dashboard-demo-cta card" style={{ marginTop: '0.85rem' }} aria-label="Demo mode">
+          <p className="dashboard-demo-cta__title" style={{ margin: 0, fontWeight: 700 }}>
+            Demo mode
+          </p>
+          <p className="muted" style={{ margin: '0.35rem 0 0', fontSize: '0.9rem' }}>
+            Explore sample data. Nothing here connects to live billing or payouts.
+          </p>
+          <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={() => navigate('/login')}>
+            Start selling
+          </button>
+        </section>
+      ) : null}
+
+      {showTrialUi && !demoExplore ? (
         <section className="dashboard-trial" aria-label="Trial status" style={{ marginTop: '0.85rem' }}>
           <div
             className={`dashboard-trial-inner${trialExpired ? ' dashboard-trial--expired' : ''}${endingSoon && trialActive ? ' dashboard-trial--warning' : ''}`}
           >
-            <span className="dashboard-trial-badge">Free Trial</span>
+            <span className="dashboard-trial-badge">Free trial</span>
             {trialExpired ? (
               <p className="dashboard-trial-text">
-                Your trial has ended. Upgrade or go live to keep using FaFo.
+                Your trial has ended. Recharge under Billing to keep accepting orders.
               </p>
             ) : (
               <p className="dashboard-trial-text">
@@ -499,29 +653,87 @@ export function Dashboard() {
         </section>
       ) : null}
 
-      <section className="dashboard-v2-footer" style={{ marginTop: '1rem' }}>
-        {isLiveAccount ? (
-          <p className="muted" style={{ margin: '0 0 0.5rem', fontSize: '0.85rem' }}>
-            <strong style={{ color: 'var(--live)' }}>LIVE</strong> — manage top-ups under{' '}
-            <Link to="/billing">Billing</Link>.
-          </p>
-        ) : null}
-        {showTrialUi && trialExpired ? (
-          <button type="button" className="btn btn-primary" disabled>
-            Go Live
+      {showTrialUi && !demoExplore ? (
+        <section className="dashboard-v2-footer" style={{ marginTop: '1rem' }}>
+          <button type="button" className="btn btn-primary" disabled={goLiveDisabled} onClick={() => navigate('/billing')}>
+            Go live
           </button>
-        ) : null}
-        {showTrialUi && !trialExpired ? (
-          <button type="button" className="btn btn-primary" disabled={goLiveDisabled}>
-            Go Live
-          </button>
-        ) : null}
-        {!showTrialUi && !isLiveAccount && effective === 'demo' ? (
+        </section>
+      ) : !showTrialUi && !isLiveAccount && effective === 'demo' && !demoExplore ? (
+        <section className="dashboard-v2-footer" style={{ marginTop: '1rem' }}>
           <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
             Explore mode — activate from <Link to="/profile">Profile</Link> / <Link to="/billing">Billing</Link>.
           </p>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
+
+      {sessionModal ? (
+        <div className="dashboard-modal-overlay" role="presentation">
+          <button type="button" className="dashboard-modal-overlay__backdrop" aria-label="Close" onClick={() => setSessionModal(false)} />
+          <div className="dashboard-modal card" role="dialog" aria-modal="true" aria-labelledby="dash-session-title">
+            <div className="dashboard-modal__head">
+              <h2 id="dash-session-title" style={{ margin: 0, fontSize: '1.05rem' }}>
+                Menu session
+              </h2>
+              <button type="button" className="btn btn-ghost" onClick={() => setSessionModal(false)}>
+                ✕
+              </button>
+            </div>
+            <p className="muted" style={{ margin: '0 0 0.75rem', fontSize: '0.875rem' }}>
+              Auto follows your menu schedules. Pick a menu to override until you switch back to auto.
+            </p>
+            <ul className="dashboard-modal__list stack" style={{ listStyle: 'none', margin: 0, padding: 0, gap: '0.5rem' }}>
+              <li>
+                <button type="button" className="btn btn-ghost dashboard-modal__opt" onClick={() => void applyMenuSessionChoice('auto')}>
+                  Auto (schedule){scheduledMenuNow ? ` → ${String(scheduledMenuNow.name || '').trim()}` : ' → All day'}
+                </button>
+              </li>
+              {menuGroupRows
+                .filter((g) => g.active !== false && g.isActive !== false)
+                .map((g) => {
+                  const nm = String(g.name || g.menuName || '').trim() || 'Menu';
+                  return (
+                    <li key={g.id}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost dashboard-modal__opt"
+                        onClick={() => void applyMenuSessionChoice({ id: g.id, name: nm })}
+                      >
+                        {nm}
+                      </button>
+                    </li>
+                  );
+                })}
+            </ul>
+          </div>
+        </div>
+      ) : null}
+
+      {shareModal === 'qr' ? (
+        <div className="dashboard-modal-overlay" role="presentation">
+          <button type="button" className="dashboard-modal-overlay__backdrop" aria-label="Close" onClick={() => setShareModal(null)} />
+          <div className="dashboard-modal card dashboard-modal--narrow" role="dialog" aria-modal="true" aria-labelledby="dash-qr-title">
+            <div className="dashboard-modal__head">
+              <h2 id="dash-qr-title" style={{ margin: 0, fontSize: '1.05rem' }}>
+                Shop QR
+              </h2>
+              <button type="button" className="btn btn-ghost" onClick={() => setShareModal(null)}>
+                ✕
+              </button>
+            </div>
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="QR code linking to your public shop" className="dashboard-qr-img" width={280} height={280} />
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                Generating…
+              </p>
+            )}
+            <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', wordBreak: 'break-all' }}>
+              {publicShopByCodeUrl(shopCodeNorm)}
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { isDemoExplorer } from '../constants/demoMode';
 import { useSeller } from '../hooks/useSeller';
 import { useSimpleToast } from '../hooks/useSimpleToast';
 import {
   createProduct,
   deleteProduct,
+  filterGlobalMenuCategoriesByCuisine,
   getProductForSeller,
-  parseStoredProductCategories,
   recomputeSellerSlotCount,
+  subscribeGlobalCuisineCategories,
+  subscribeGlobalMenuCategories,
   updateProduct,
 } from '../services/firestore';
 import { listMenuGroups, syncMenuGroupAfterProductSave } from '../services/menuGroupsService';
@@ -17,11 +20,9 @@ import {
   uploadProductImageJpeg,
 } from '../services/storage';
 
-function buildTags(fastSelling, special) {
-  const tags = [];
-  if (fastSelling) tags.push('Fast Selling');
-  if (special) tags.push('Special');
-  return tags;
+function tagsFromInput(text) {
+  if (typeof text !== 'string' || !text.trim()) return [];
+  return [...new Set(text.split(',').map((t) => t.trim()).filter(Boolean))];
 }
 
 function productDisplayName(p) {
@@ -33,24 +34,30 @@ export function AddItem() {
   const navigate = useNavigate();
   const { productId } = useParams();
   const isEdit = Boolean(productId);
+  const demoReadOnly = isDemoExplorer();
   const { seller, loading: sellerLoading, error: sellerError } = useSeller();
   const { toast, showToast } = useSimpleToast();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [cuisineCategory, setCuisineCategory] = useState('');
-  const [menuCategory, setMenuCategory] = useState('');
-  const [itemCategory, setItemCategory] = useState('');
   const [price, setPrice] = useState('');
   const [prepTime, setPrepTime] = useState('');
   const [quantity, setQuantity] = useState(0);
 
-  const [tagFastSelling, setTagFastSelling] = useState(false);
-  const [tagSpecial, setTagSpecial] = useState(false);
-  const [available, setAvailable] = useState(true);
-  const [menuGroupId, setMenuGroupId] = useState('');
-  const [initialMenuGroupId, setInitialMenuGroupId] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
+  const [menuGroupIds, setMenuGroupIds] = useState([]);
+  const [initialMenuGroupIds, setInitialMenuGroupIds] = useState([]);
   const [menuGroups, setMenuGroups] = useState([]);
+  const [globalCuisines, setGlobalCuisines] = useState([]);
+  const [globalMenus, setGlobalMenus] = useState([]);
+  const [globalCuisinesLoad, setGlobalCuisinesLoad] = useState('loading');
+  const [globalMenusLoad, setGlobalMenusLoad] = useState('loading');
+  const [cuisineCategoryId, setCuisineCategoryId] = useState('');
+  const [menuCategoryId, setMenuCategoryId] = useState('');
+  const [legacyCuisineName, setLegacyCuisineName] = useState('');
+  const [legacyMenuName, setLegacyMenuName] = useState('');
+  const [editCategoriesHydrated, setEditCategoriesHydrated] = useState(false);
   const [discountLabel, setDiscountLabel] = useState('');
   const [discountPercent, setDiscountPercent] = useState('');
 
@@ -93,9 +100,104 @@ export function AddItem() {
   }, [seller?.id]);
 
   useEffect(() => {
+    setGlobalCuisinesLoad('loading');
+    return subscribeGlobalCuisineCategories(
+      (rows) => {
+        setGlobalCuisines(rows);
+        setGlobalCuisinesLoad('ready');
+      },
+      () => {
+        setGlobalCuisines([]);
+        setGlobalCuisinesLoad('error');
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    setGlobalMenusLoad('loading');
+    return subscribeGlobalMenuCategories(
+      (rows) => {
+        setGlobalMenus(rows);
+        setGlobalMenusLoad('ready');
+      },
+      () => {
+        setGlobalMenus([]);
+        setGlobalMenusLoad('error');
+      },
+    );
+  }, []);
+
+  const activeGlobalCuisines = useMemo(
+    () => globalCuisines.filter((c) => c.active !== false),
+    [globalCuisines],
+  );
+
+  const selectedCuisineName = useMemo(() => {
+    const row =
+      activeGlobalCuisines.find((c) => c.id === cuisineCategoryId) ||
+      globalCuisines.find((c) => c.id === cuisineCategoryId);
+    return row?.name ? String(row.name) : '';
+  }, [activeGlobalCuisines, globalCuisines, cuisineCategoryId]);
+
+  const menuRowsForSelect = useMemo(
+    () =>
+      filterGlobalMenuCategoriesByCuisine(
+        globalMenus,
+        cuisineCategoryId,
+        selectedCuisineName,
+      ),
+    [globalMenus, cuisineCategoryId, selectedCuisineName],
+  );
+
+  useEffect(() => {
+    const allowed = new Set(menuRowsForSelect.map((m) => m.id));
+    if (menuCategoryId && !allowed.has(menuCategoryId)) {
+      setMenuCategoryId('');
+    }
+  }, [menuRowsForSelect, menuCategoryId]);
+
+  useEffect(() => {
+    if (!isEdit || !editCategoriesHydrated) return;
+    if (!legacyCuisineName.trim() || cuisineCategoryId) return;
+    if (!globalCuisines.length) return;
+    const needle = legacyCuisineName.trim().toLowerCase();
+    const match =
+      activeGlobalCuisines.find((c) => c.name.toLowerCase() === needle) ||
+      globalCuisines.find((c) => c.name.toLowerCase() === needle);
+    if (match) setCuisineCategoryId(match.id);
+  }, [isEdit, editCategoriesHydrated, legacyCuisineName, cuisineCategoryId, activeGlobalCuisines, globalCuisines]);
+
+  useEffect(() => {
+    if (!isEdit || !editCategoriesHydrated) return;
+    if (!legacyMenuName.trim() || menuCategoryId) return;
+    if (!globalMenus.length) return;
+    const needle = legacyMenuName.trim().toLowerCase();
+    const pool = filterGlobalMenuCategoriesByCuisine(
+      globalMenus,
+      cuisineCategoryId,
+      selectedCuisineName,
+    );
+    const match =
+      pool.find((m) => m.name.toLowerCase() === needle) ||
+      globalMenus.find((m) => m.name.toLowerCase() === needle);
+    if (match) setMenuCategoryId(match.id);
+  }, [
+    isEdit,
+    editCategoriesHydrated,
+    legacyMenuName,
+    menuCategoryId,
+    globalMenus,
+    cuisineCategoryId,
+    selectedCuisineName,
+  ]);
+
+  useEffect(() => {
     if (!isEdit) {
       setProductLoading(false);
       setProductLoadError(null);
+      setEditCategoriesHydrated(false);
+      setLegacyCuisineName('');
+      setLegacyMenuName('');
       return undefined;
     }
     if (!seller?.id) {
@@ -105,6 +207,7 @@ export function AddItem() {
     let cancelled = false;
     setProductLoading(true);
     setProductLoadError(null);
+    setEditCategoriesHydrated(false);
 
     (async () => {
       try {
@@ -120,14 +223,12 @@ export function AddItem() {
         setDescription(
           typeof p.description === 'string' ? p.description : '',
         );
-        setCuisineCategory(
-          typeof p.cuisineCategory === 'string' ? p.cuisineCategory : '',
+        setCuisineCategoryId(String(p.cuisineCategoryId ?? '').trim());
+        setMenuCategoryId(String(p.menuCategoryId ?? '').trim());
+        setLegacyCuisineName(
+          String(p.cuisineCategoryName ?? p.cuisineCategory ?? '').trim(),
         );
-        const { menuCategory: m, itemCategory: i } = parseStoredProductCategories(
-          p.category,
-        );
-        setMenuCategory(m);
-        setItemCategory(i);
+        setLegacyMenuName(String(p.menuCategoryName ?? p.menuCategory ?? '').trim());
         setPrice(
           p.price != null && Number.isFinite(Number(p.price))
             ? String(p.price)
@@ -138,9 +239,7 @@ export function AddItem() {
         setQuantity(Number.isFinite(q) ? Math.max(0, Math.floor(q)) : 0);
 
         const tags = Array.isArray(p.tags) ? p.tags : [];
-        setTagFastSelling(tags.includes('Fast Selling'));
-        setTagSpecial(tags.includes('Special'));
-        setAvailable(p.available !== false && p.available !== 0);
+        setTagsInput(tags.length ? tags.join(', ') : '');
 
         const dl = p.discountLabel;
         setDiscountLabel(typeof dl === 'string' ? dl : '');
@@ -157,11 +256,17 @@ export function AddItem() {
               : '';
         setExistingImageUrl(img);
 
-        const mg = p.menuGroupId;
-        const gid = typeof mg === 'string' && mg.trim() ? mg.trim() : '';
-        setMenuGroupId(gid);
-        setInitialMenuGroupId(gid);
+        const rawMg = p.menuGroupIds;
+        let mgIds = [];
+        if (Array.isArray(rawMg) && rawMg.length) {
+          mgIds = [...new Set(rawMg.map((x) => String(x ?? '').trim()).filter(Boolean))];
+        } else if (typeof p.menuGroupId === 'string' && p.menuGroupId.trim()) {
+          mgIds = [p.menuGroupId.trim()];
+        }
+        setMenuGroupIds(mgIds);
+        setInitialMenuGroupIds(mgIds);
 
+        setEditCategoriesHydrated(true);
         setProductLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -182,6 +287,12 @@ export function AddItem() {
 
   function decrementQty() {
     setQuantity((q) => Math.max(0, q - 1));
+  }
+
+  function toggleMenuGroup(id) {
+    const sid = String(id).trim();
+    if (!sid) return;
+    setMenuGroupIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]));
   }
 
   function clearPendingImage() {
@@ -212,20 +323,42 @@ export function AddItem() {
   }
 
   function buildBasePayload() {
+    const cRow =
+      activeGlobalCuisines.find((c) => c.id === cuisineCategoryId) ||
+      globalCuisines.find((c) => c.id === cuisineCategoryId);
+    const menuPool = filterGlobalMenuCategoriesByCuisine(
+      globalMenus,
+      cuisineCategoryId,
+      cRow?.name ? String(cRow.name) : '',
+    );
+    const mRow =
+      menuPool.find((m) => m.id === menuCategoryId) ||
+      globalMenus.find((m) => m.id === menuCategoryId);
+    if (!cRow?.name) {
+      throw new Error('Select a cuisine category from the admin list.');
+    }
+    if (!mRow?.name) {
+      throw new Error('Select a menu category from the admin list.');
+    }
     return {
       name,
       description,
-      cuisineCategory,
-      menuCategory,
-      itemCategory,
+      cuisineCategory: cRow.name,
+      cuisineCategoryId: cRow.id,
+      cuisineCategoryName: cRow.name,
+      menuCategory: mRow.name,
+      menuCategoryId: mRow.id,
+      menuCategoryName: mRow.name,
+      itemCategory: '',
       price,
       prepTime,
       quantity,
-      available,
-      tags: buildTags(tagFastSelling, tagSpecial),
+      available: true,
+      tags: tagsFromInput(tagsInput),
       discountLabel,
       discountPercent,
-      menuGroupId: menuGroupId.trim() ? menuGroupId.trim() : null,
+      menuGroupIds: [...menuGroupIds],
+      menuGroupId: menuGroupIds.length ? menuGroupIds[0] : null,
     };
   }
 
@@ -237,8 +370,7 @@ export function AddItem() {
     setImageUploadPct(0);
     try {
       const base = buildBasePayload();
-      const gid =
-        base.menuGroupId && String(base.menuGroupId).trim() ? String(base.menuGroupId).trim() : null;
+      const nextMenus = [...menuGroupIds];
       if (isEdit) {
         await updateProduct(productId, seller.id, base);
         if (pendingImage) {
@@ -253,8 +385,8 @@ export function AddItem() {
           setExistingImageUrl(url);
           clearPendingImage();
         }
-        await syncMenuGroupAfterProductSave(seller.id, productId, gid, initialMenuGroupId || null);
-        setInitialMenuGroupId(gid || '');
+        await syncMenuGroupAfterProductSave(seller.id, productId, nextMenus, initialMenuGroupIds);
+        setInitialMenuGroupIds(nextMenus);
         showToast('Item saved.');
       } else {
         const newId = await createProduct(seller.id, base);
@@ -264,8 +396,8 @@ export function AddItem() {
           await updateProduct(newId, seller.id, { ...base, imageUrl: url });
           clearPendingImage();
         }
-        await syncMenuGroupAfterProductSave(seller.id, newId, gid, null);
-        setInitialMenuGroupId(gid || '');
+        await syncMenuGroupAfterProductSave(seller.id, newId, nextMenus, []);
+        setInitialMenuGroupIds(nextMenus);
         showToast('Item created.');
       }
       recomputeSellerSlotCount(seller.id).catch(() => {});
@@ -328,7 +460,6 @@ export function AddItem() {
   if (!seller) {
     return (
       <div className="add-item card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Add item</h1>
         <p className="muted" style={{ margin: 0 }}>
           Set up your shop before adding products.
         </p>
@@ -364,24 +495,8 @@ export function AddItem() {
 
   return (
     <div className="add-item">
-      <header className="add-item-header">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          {isEdit ? 'Edit item' : 'Add custom item'}
-        </h1>
-      </header>
-
+      <fieldset className="fieldset-reset" disabled={demoReadOnly}>
       <form className="card stack add-item-form" onSubmit={handleSubmit}>
-        <div className="add-item-field">
-          <label className="orders-page-wa-pref settings-page-check">
-            <input
-              type="checkbox"
-              checked={available}
-              onChange={(e) => setAvailable(e.target.checked)}
-            />
-            <span>Available on menu</span>
-          </label>
-        </div>
-
         <div className="add-item-field">
           <label className="label" htmlFor="add-name">
             Name
@@ -450,70 +565,129 @@ export function AddItem() {
           />
         </div>
 
-        <div className="add-item-field">
+        <div className="add-item-field add-item-field--select">
           <label className="label" htmlFor="add-cuisine">
             Cuisine category
           </label>
-          <input
+          {globalCuisinesLoad === 'loading' ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Loading categories…
+            </p>
+          ) : null}
+          {globalCuisinesLoad === 'error' ? (
+            <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Could not load cuisine categories. Check your connection and try again.
+            </p>
+          ) : null}
+          {globalCuisinesLoad === 'ready' && activeGlobalCuisines.length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              No categories available. Contact admin.
+            </p>
+          ) : null}
+          <select
             id="add-cuisine"
             className="input"
-            type="text"
-            value={cuisineCategory}
-            onChange={(e) => setCuisineCategory(e.target.value)}
-            placeholder="e.g. North Indian"
-          />
+            value={cuisineCategoryId}
+            onChange={(e) => {
+              setCuisineCategoryId(e.target.value);
+              setMenuCategoryId('');
+            }}
+            required
+            disabled={
+              globalCuisinesLoad !== 'ready' || activeGlobalCuisines.length === 0
+            }
+          >
+            <option value="">Select category</option>
+            {activeGlobalCuisines.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+            {isEdit &&
+            cuisineCategoryId &&
+            !activeGlobalCuisines.some((c) => c.id === cuisineCategoryId) ? (
+              <option value={cuisineCategoryId}>
+                {legacyCuisineName || 'Saved cuisine'} (saved)
+              </option>
+            ) : null}
+          </select>
+          <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem' }}>
+            Admin-managed list — you can only choose from it.
+          </p>
         </div>
 
-        <div className="add-item-field">
+        <div className="add-item-field add-item-field--select">
           <label className="label" htmlFor="add-menu-cat">
             Menu category
           </label>
-          <input
+          {globalMenusLoad === 'loading' ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Loading menu categories…
+            </p>
+          ) : null}
+          {globalMenusLoad === 'error' ? (
+            <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Could not load menu categories. Check your connection and try again.
+            </p>
+          ) : null}
+          {globalMenusLoad === 'ready' &&
+          globalMenus.filter((m) => m.active !== false).length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              No menu categories available. Contact admin.
+            </p>
+          ) : null}
+          <select
             id="add-menu-cat"
             className="input"
-            type="text"
-            value={menuCategory}
-            onChange={(e) => setMenuCategory(e.target.value)}
-            placeholder="e.g. Breakfast"
-          />
-        </div>
-
-        <div className="add-item-field">
-          <label className="label" htmlFor="add-item-cat">
-            Item category
-          </label>
-          <input
-            id="add-item-cat"
-            className="input"
-            type="text"
-            value={itemCategory}
-            onChange={(e) => setItemCategory(e.target.value)}
-            placeholder="e.g. Beverages"
-          />
-        </div>
-
-        <div className="add-item-field">
-          <label className="label" htmlFor="add-menu-group">
-            Menu group (for storefront)
-          </label>
-          <select
-            id="add-menu-group"
-            className="input"
-            value={menuGroupId}
-            onChange={(e) => setMenuGroupId(e.target.value)}
-            aria-label="Link to menu group"
+            value={menuCategoryId}
+            onChange={(e) => setMenuCategoryId(e.target.value)}
+            required
+            disabled={globalMenusLoad !== 'ready' || menuRowsForSelect.length === 0}
           >
-            <option value="">None (not grouped)</option>
-            {menuGroups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name || g.menuName || g.id}
+            <option value="">Select menu category</option>
+            {menuRowsForSelect.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
               </option>
             ))}
+            {isEdit &&
+            menuCategoryId &&
+            !menuRowsForSelect.some((m) => m.id === menuCategoryId) ? (
+              <option value={menuCategoryId}>
+                {legacyMenuName || 'Saved menu category'} (saved)
+              </option>
+            ) : null}
           </select>
           <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem' }}>
-            Create groups under <strong>Menu → Menu groups</strong>. The dashboard session (Breakfast /
-            Lunch, etc.) filters by this.
+            Options follow your cuisine when the admin has linked them; otherwise all active menu
+            categories are shown.
           </p>
+        </div>
+
+        <div className="add-item-field">
+          <span className="label" id="add-menu-groups-label">
+            Menu assignment
+          </span>
+          {menuGroups.length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Create menus under <Link to="/menu?tab=menus">Menu → Menus</Link>, then assign this item.
+            </p>
+          ) : (
+            <ul className="add-item-menu-pick stack" style={{ listStyle: 'none', margin: 0, padding: 0, gap: '0.35rem' }} aria-labelledby="add-menu-groups-label">
+              {menuGroups.map((g) => (
+                <li key={g.id}>
+                  <label className="orders-page-wa-pref settings-page-check" style={{ gap: '0.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={menuGroupIds.includes(g.id)}
+                      onChange={() => toggleMenuGroup(g.id)}
+                    />
+                    <span>{g.name || g.menuName || g.id}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="add-item-field">
@@ -603,33 +777,20 @@ export function AddItem() {
           </div>
         </div>
 
-        <fieldset className="add-item-tags">
-          <legend className="label">Tags</legend>
-          <label className="add-item-tag-row">
-            <input
-              type="checkbox"
-              checked={tagFastSelling}
-              onChange={(e) => setTagFastSelling(e.target.checked)}
-            />
-            <span>Fast Selling</span>
+        <div className="add-item-field">
+          <label className="label" htmlFor="add-tags">
+            Tags (optional)
           </label>
-          <label className="add-item-tag-row">
-            <input
-              type="checkbox"
-              checked={tagSpecial}
-              onChange={(e) => setTagSpecial(e.target.checked)}
-            />
-            <span>Special</span>
-          </label>
-          <button
-            type="button"
-            className="btn btn-ghost add-item-tag-more"
-            disabled
-            title="Coming soon"
-          >
-            Add more
-          </button>
-        </fieldset>
+          <input
+            id="add-tags"
+            className="input"
+            type="text"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+            placeholder="Comma-separated, e.g. spicy, bestseller"
+            autoComplete="off"
+          />
+        </div>
 
         {submitError ? <p className="error add-item-error">{submitError}</p> : null}
 
@@ -643,13 +804,14 @@ export function AddItem() {
           <button
             type="button"
             className="btn btn-ghost add-item-delete"
-            disabled={submitting}
+            disabled={submitting || demoReadOnly}
             onClick={handleDelete}
           >
             Delete item
           </button>
         </div>
       ) : null}
+      </fieldset>
 
       <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/menu">← Back to menu</Link>

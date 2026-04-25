@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Pencil } from 'lucide-react';
+import { isDemoExplorer } from '../constants/demoMode';
 import { useSeller } from '../hooks/useSeller';
 import { useSimpleToast } from '../hooks/useSimpleToast';
 import {
@@ -15,16 +17,24 @@ import {
   checkTrialStatus,
   getTrialDaysLeft,
   isTrialEndingSoon,
+  normalizeShopOpenManualMode,
   resolveEffectiveSellerMode,
+  resolveShopOpenNow,
   TRIAL_ENDING_DAYS_THRESHOLD,
 } from '../services/sellerHelpers';
+import { reverseGeocodeLatLng } from '../utils/reverseGeocode';
+import { CompactTimeInput } from '../components/CompactTimeInput';
 
-function locationToCoords(location) {
-  if (!location) {
-    return { lat: '', lng: '' };
+function locationToCoords(seller) {
+  if (!seller) return { lat: '', lng: '' };
+  const loc = seller.location;
+  if (loc && typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+    return { lat: loc.latitude, lng: loc.longitude };
   }
-  if (typeof location.latitude === 'number' && typeof location.longitude === 'number') {
-    return { lat: location.latitude, lng: location.longitude };
+  const lat = Number(seller.lat ?? seller.latitude);
+  const lng = Number(seller.lng ?? seller.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return { lat, lng };
   }
   return { lat: '', lng: '' };
 }
@@ -62,7 +72,14 @@ export function ShopProfile() {
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
 
+  const [shopTags, setShopTags] = useState('');
+  const [description, setDescription] = useState('');
+  const [openingTime, setOpeningTime] = useState('');
+  const [closingTime, setClosingTime] = useState('');
+  const [shopOpenManualMode, setShopOpenManualMode] = useState('auto');
+
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [resolvedAddress, setResolvedAddress] = useState('');
 
   useEffect(() => {
     return () => {
@@ -79,9 +96,37 @@ export function ShopProfile() {
     setOwnerName(seller.ownerName ?? '');
     setPhone(seller.phone ?? '');
     setAddress(seller.address ?? '');
-    const c = locationToCoords(seller.location);
+    const c = locationToCoords(seller);
     setLat(c.lat === '' ? '' : String(c.lat));
     setLng(c.lng === '' ? '' : String(c.lng));
+    const st = seller.shopTags ?? seller.tags;
+    if (Array.isArray(st)) setShopTags(st.join(', '));
+    else if (typeof st === 'string') setShopTags(st);
+    else setShopTags('');
+    setDescription(typeof seller.description === 'string' ? seller.description : '');
+    setOpeningTime(seller.openingTime ?? seller.openTime ?? '');
+    setClosingTime(seller.closingTime ?? seller.closeTime ?? '');
+    setShopOpenManualMode(normalizeShopOpenManualMode(seller.shopOpenManualMode));
+  }, [seller, editing]);
+
+  useEffect(() => {
+    if (!seller || editing) {
+      setResolvedAddress('');
+      return undefined;
+    }
+    const c = locationToCoords(seller);
+    if (!Number.isFinite(c.lat) || !Number.isFinite(c.lng)) {
+      setResolvedAddress('');
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const label = await reverseGeocodeLatLng(c.lat, c.lng);
+      if (!cancelled) setResolvedAddress(label);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [seller, editing]);
 
   function clearLogoPick() {
@@ -95,16 +140,25 @@ export function ShopProfile() {
   }
 
   function beginEdit() {
+    if (isDemoExplorer()) return;
     if (!seller) return;
     setFormError('');
     clearLogoPick();
-    const c = locationToCoords(seller.location);
+    const c = locationToCoords(seller);
     setShopName(seller.shopName ?? '');
     setOwnerName(seller.ownerName ?? '');
     setPhone(seller.phone ?? '');
     setAddress(seller.address ?? '');
     setLat(c.lat === '' ? '' : String(c.lat));
     setLng(c.lng === '' ? '' : String(c.lng));
+    const st = seller.shopTags ?? seller.tags;
+    if (Array.isArray(st)) setShopTags(st.join(', '));
+    else if (typeof st === 'string') setShopTags(st);
+    else setShopTags('');
+    setDescription(typeof seller.description === 'string' ? seller.description : '');
+    setOpeningTime(seller.openingTime ?? seller.openTime ?? '');
+    setClosingTime(seller.closingTime ?? seller.closeTime ?? '');
+    setShopOpenManualMode(normalizeShopOpenManualMode(seller.shopOpenManualMode));
     setEditing(true);
   }
 
@@ -144,6 +198,15 @@ export function ShopProfile() {
     setSaveBusy(true);
     setLogoUploadPct(0);
     try {
+      const merged = {
+        ...seller,
+        shopOpenManualMode,
+        openingTime,
+        closingTime,
+        openTime: openingTime,
+        closeTime: closingTime,
+      };
+      const nextOpen = resolveShopOpenNow(merged);
       const updates = {
         shopName,
         ownerName,
@@ -151,7 +214,18 @@ export function ShopProfile() {
         address,
         lat: lt,
         lng: lg,
+        shopTags,
+        tags: shopTags,
+        description,
+        openingTime,
+        closingTime,
+        openTime: openingTime,
+        closeTime: closingTime,
+        shopOpenManualMode,
       };
+      if (nextOpen !== null) {
+        updates.shopOpenNow = nextOpen;
+      }
       if (pendingLogo) {
         const blob = await compressImageToJpegBlob(pendingLogo);
         const url = await uploadShopLogoJpeg(seller.id, blob, setLogoUploadPct);
@@ -233,7 +307,6 @@ export function ShopProfile() {
   if (!seller) {
     return (
       <div className="shop-profile card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>No shop profile</h1>
         <p className="muted" style={{ margin: 0 }}>
           Create your seller profile first.
         </p>
@@ -244,24 +317,32 @@ export function ShopProfile() {
     );
   }
 
-  const coords = locationToCoords(seller.location);
+  const coords = locationToCoords(seller);
   const displayCoords = formatCoords(coords.lat, coords.lng);
+  const locationLine =
+    resolvedAddress && displayCoords !== '—'
+      ? `${resolvedAddress} · ${displayCoords}`
+      : resolvedAddress || displayCoords;
+
+  const hideProfileBilling =
+    effective === 'live' &&
+    (Number(seller?.approvedRechargeTotal ?? 0) > 0 || seller?.hasLiveHistory === true);
 
   return (
     <div className="shop-profile">
-      <header className="shop-profile-header">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          Shop profile
-        </h1>
-        {!editing ? (
-          <button type="button" className="btn btn-ghost shop-profile-edit-btn" onClick={beginEdit}>
-            Edit
-          </button>
-        ) : null}
-      </header>
-
       {!editing ? (
-        <div className="card stack shop-profile-card">
+        <div className="shop-profile-card-wrap">
+          {!isDemoExplorer() ? (
+            <button
+              type="button"
+              className="shop-profile-edit-fab"
+              onClick={beginEdit}
+              aria-label="Edit shop profile"
+            >
+              <Pencil size={18} strokeWidth={2.1} aria-hidden />
+            </button>
+          ) : null}
+          <div className="card stack shop-profile-card">
           {typeof seller.imageUrl === 'string' && seller.imageUrl.trim() ? (
             <div className="shop-profile-logo-wrap">
               <img
@@ -288,20 +369,51 @@ export function ShopProfile() {
               <dd>{seller.shopName ?? '—'}</dd>
             </div>
             <div className="shop-profile-row">
+              <dt>Tags</dt>
+              <dd>
+                {Array.isArray(seller.shopTags)
+                  ? seller.shopTags.join(', ')
+                  : typeof seller.shopTags === 'string'
+                    ? seller.shopTags
+                    : Array.isArray(seller.tags)
+                      ? seller.tags.join(', ')
+                      : typeof seller.tags === 'string'
+                        ? seller.tags
+                        : '—'}
+              </dd>
+            </div>
+            <div className="shop-profile-row">
+              <dt>Description</dt>
+              <dd>{seller.description ?? '—'}</dd>
+            </div>
+            <div className="shop-profile-row">
+              <dt>Hours</dt>
+              <dd>
+                {seller.openingTime ?? seller.openTime ?? '—'} –{' '}
+                {seller.closingTime ?? seller.closeTime ?? '—'}
+              </dd>
+            </div>
+            <div className="shop-profile-row">
+              <dt>Open mode</dt>
+              <dd>{normalizeShopOpenManualMode(seller.shopOpenManualMode)}</dd>
+            </div>
+            <div className="shop-profile-row">
               <dt>Owner name</dt>
               <dd>{seller.ownerName ?? '—'}</dd>
             </div>
             <div className="shop-profile-row">
               <dt>Location</dt>
-              <dd>{displayCoords}</dd>
+              <dd>{locationLine}</dd>
             </div>
             <div className="shop-profile-row">
               <dt>Address</dt>
               <dd>{seller.address ?? '—'}</dd>
             </div>
           </dl>
+          </div>
         </div>
       ) : (
+        <fieldset className="fieldset-reset" disabled={isDemoExplorer()}>
         <form className="card stack shop-profile-card" onSubmit={handleSave}>
           <div className="shop-profile-field">
             <span className="label">Shop ID</span>
@@ -371,6 +483,68 @@ export function ShopProfile() {
             />
           </div>
           <div className="shop-profile-field">
+            <label className="label" htmlFor="sp-tags">
+              Tags (comma-separated)
+            </label>
+            <input
+              id="sp-tags"
+              className="input"
+              type="text"
+              value={shopTags}
+              onChange={(ev) => setShopTags(ev.target.value)}
+              placeholder="street food, vegan options"
+            />
+          </div>
+          <div className="shop-profile-field">
+            <label className="label" htmlFor="sp-desc">
+              Description
+            </label>
+            <textarea
+              id="sp-desc"
+              className="input add-item-textarea"
+              rows={3}
+              value={description}
+              onChange={(ev) => setDescription(ev.target.value)}
+              placeholder="What buyers should know"
+            />
+          </div>
+          <div className="shop-profile-field">
+            <span className="label">Opening & closing</span>
+            <div className="shop-profile-latlng">
+              <CompactTimeInput
+                id="sp-open"
+                value={openingTime}
+                onChange={setOpeningTime}
+                disabled={saveBusy}
+                hourLabel="Opening hour"
+                minuteLabel="Opening minute"
+              />
+              <CompactTimeInput
+                id="sp-close"
+                value={closingTime}
+                onChange={setClosingTime}
+                disabled={saveBusy}
+                hourLabel="Closing hour"
+                minuteLabel="Closing minute"
+              />
+            </div>
+          </div>
+          <div className="shop-profile-field">
+            <span className="label">Open mode (buyer view)</span>
+            <div className="shop-profile-actions-row" style={{ flexWrap: 'wrap' }}>
+              {['auto', 'open', 'closed'].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`btn btn--sm${shopOpenManualMode === m ? ' btn-primary' : ' btn-ghost'}`}
+                  onClick={() => setShopOpenManualMode(m)}
+                >
+                  {m === 'auto' ? 'Auto (hours)' : m === 'open' ? 'Always open' : 'Always closed'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="shop-profile-field">
             <label className="label" htmlFor="sp-owner">
               Owner name
             </label>
@@ -435,66 +609,73 @@ export function ShopProfile() {
             </button>
           </div>
         </form>
+        </fieldset>
       )}
 
-      {isLiveAccount ? (
-        <section className="card stack shop-profile-trial" aria-label="Live account">
-          <h2 className="shop-profile-section-title">Live account</h2>
-          <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
-            You are on <strong style={{ color: 'var(--live)' }}>LIVE</strong> billing. Trial
-            controls are hidden — use <Link to="/billing">Billing</Link> for balance and slots.
-          </p>
-        </section>
-      ) : (
-        <section
-          className={`shop-profile-trial card${endingSoon && trialActive ? ' shop-profile-trial--warn' : ''}${!trialActive ? ' shop-profile-trial--expired' : ''}`}
-          aria-label="Trial"
-        >
-          <h2 className="shop-profile-section-title">Trial</h2>
-          {trialActive ? (
-            <>
-              <p className="shop-profile-trial-badge">Free Trial</p>
-              {endingSoon ? (
-                <p className="shop-profile-trial-warning">
-                  Your trial ends in {daysLeft}{' '}
-                  {daysLeft === 1 ? 'day' : 'days'} (within {TRIAL_ENDING_DAYS_THRESHOLD}{' '}
-                  days). Consider going live soon.
-                </p>
-              ) : (
-                <p className="muted" style={{ margin: 0 }}>
-                  <strong>{daysLeft}</strong> {daysLeft === 1 ? 'day' : 'days'} remaining.
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="muted" style={{ margin: 0 }}>
-              Trial is not active or has expired. Start a new 15-day window below after
-              accepting terms.
+      <fieldset className="fieldset-reset" disabled={isDemoExplorer()}>
+      {!hideProfileBilling ? (
+        isLiveAccount ? (
+          <section className="card stack shop-profile-trial" aria-label="Live account">
+            <h2 className="shop-profile-section-title">Live account</h2>
+            <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
+              You are on <strong style={{ color: 'var(--live)' }}>LIVE</strong> billing. Trial
+              controls are hidden — use <Link to="/billing">Billing</Link> for balance and slots.
             </p>
-          )}
+          </section>
+        ) : (
+          <section
+            className={`shop-profile-trial card${endingSoon && trialActive ? ' shop-profile-trial--warn' : ''}${!trialActive ? ' shop-profile-trial--expired' : ''}`}
+            aria-label="Trial"
+          >
+            <h2 className="shop-profile-section-title">Trial</h2>
+            {trialActive ? (
+              <>
+                <p className="shop-profile-trial-badge">Free Trial</p>
+                {endingSoon ? (
+                  <p className="shop-profile-trial-warning">
+                    Your trial ends in {daysLeft}{' '}
+                    {daysLeft === 1 ? 'day' : 'days'} (within {TRIAL_ENDING_DAYS_THRESHOLD}{' '}
+                    days). Consider going live soon.
+                  </p>
+                ) : (
+                  <p className="muted" style={{ margin: 0 }}>
+                    <strong>{daysLeft}</strong> {daysLeft === 1 ? 'day' : 'days'} remaining.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                Trial is not active or has expired. Start a new 15-day window below after
+                accepting terms.
+              </p>
+            )}
+          </section>
+        )
+      ) : null}
+
+      {!hideProfileBilling ? (
+        <section className="card stack shop-profile-terms">
+          <label className="shop-profile-terms-label">
+            <input
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(ev) => setTermsAccepted(ev.target.checked)}
+            />
+            <span>
+              I accept the terms and conditions for trials, billing, and using FaFo as a
+              seller.
+            </span>
+          </label>
+          {blocked ? (
+            <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
+              This shop is blocked. Contact support.
+            </p>
+          ) : null}
         </section>
-      )}
+      ) : null}
 
-      <section className="card stack shop-profile-terms">
-        <label className="shop-profile-terms-label">
-          <input
-            type="checkbox"
-            checked={termsAccepted}
-            onChange={(ev) => setTermsAccepted(ev.target.checked)}
-          />
-          <span>
-            I accept the terms and conditions for trials, billing, and using FaFo as a
-            seller.
-          </span>
-        </label>
-        {blocked ? (
-          <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
-            This shop is blocked. Contact support.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="shop-profile-cta stack">
+      {!hideProfileBilling ? (
+        <section className="shop-profile-cta stack">
         {!isLiveAccount ? (
           <button
             type="button"
@@ -548,6 +729,8 @@ export function ShopProfile() {
           </p>
         )}
       </section>
+      ) : null}
+      </fieldset>
 
       {formError && !editing ? (
         <p className="error shop-profile-global-error">{formError}</p>

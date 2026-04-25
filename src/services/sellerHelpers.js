@@ -81,6 +81,9 @@ export function resolveEffectiveSellerMode(seller) {
   if (sm === 'suspended' || bill === 'suspended') return 'suspended';
   if (seller.isBlocked === true) return 'blocked';
   if (sm === 'live' || seller.isLive === true) return 'live';
+  const approvedTotal = Number(seller.approvedRechargeTotal);
+  if (Number.isFinite(approvedTotal) && approvedTotal > 0) return 'live';
+  if (seller.hasLiveHistory === true) return 'live';
   if (sm === 'freetrial' || sm === 'trial') return 'freeTrial';
   if (checkTrialStatus(seller) === 'active') return 'freeTrial';
   if (sm === 'demo') return 'demo';

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Plus } from 'lucide-react';
 import { CustomerCard } from '../components/CustomerCard';
+import { isDemoExplorer } from '../constants/demoMode';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
 import {
@@ -29,6 +31,7 @@ const SORTS = [
 ];
 
 export function Customers() {
+  const demoReadOnly = isDemoExplorer();
   const { seller, sellerId, loading: sellerLoading, error: sellerError } = useSeller();
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -116,7 +119,6 @@ export function Customers() {
   if (!seller) {
     return (
       <div className="customers-page card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Customers</h1>
         <p className="muted" style={{ margin: 0 }}>
           Set up your shop first.
         </p>
@@ -129,23 +131,36 @@ export function Customers() {
 
   return (
     <div className="customers-page customers-page--premium">
-      <header className="customers-page-header customers-page-header--premium">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          Customers
-        </h1>
-      </header>
-
-      <div className="customers-toolbar card">
-        <label className="customers-search">
-          <span className="sr-only">Search</span>
-          <input
-            className="input customers-search__input"
-            placeholder="Search name, mobile, or order count…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoComplete="off"
-          />
-        </label>
+      <div className={`customers-toolbar card${demoReadOnly ? ' customers-toolbar--demo' : ''}`}>
+        <div className="customers-toolbar__row1">
+          <label className="customers-search">
+            <span className="sr-only">Search</span>
+            <input
+              className="input customers-search__input"
+              placeholder="Search name, mobile, or order count…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+              disabled={demoReadOnly}
+            />
+          </label>
+          <div className="customers-sort">
+            <span className="muted customers-sort__label">Sort</span>
+            <select
+              className="input customers-sort__select"
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              aria-label="Sort customers"
+              disabled={demoReadOnly}
+            >
+              {SORTS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         <div className="customers-tabs" role="tablist" aria-label="Customer tier">
           {TABS.map((t) => (
@@ -156,26 +171,11 @@ export function Customers() {
               aria-selected={tab === t.id}
               className={`customers-tab${tab === t.id ? ' customers-tab--active' : ''}`}
               onClick={() => setTab(t.id)}
+              disabled={demoReadOnly}
             >
               {t.label}
             </button>
           ))}
-        </div>
-
-        <div className="customers-sort">
-          <span className="muted customers-sort__label">Sort</span>
-          <select
-            className="input customers-sort__select"
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-            aria-label="Sort customers"
-          >
-            {SORTS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 
@@ -214,6 +214,16 @@ export function Customers() {
       <p className="muted" style={{ margin: '1rem 0 0', fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
+
+      {!demoReadOnly ? (
+        <Link
+          to="/orders"
+          className="orders-quick-fab orders-quick-fab--link"
+          aria-label="Go to orders for quick order"
+        >
+          <Plus size={26} strokeWidth={2.25} aria-hidden />
+        </Link>
+      ) : null}
     </div>
   );
 }

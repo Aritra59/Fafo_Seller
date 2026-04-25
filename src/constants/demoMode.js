@@ -1,3 +1,5 @@
+import { resolveMenuDays } from '../utils/menuSchedule';
+
 /** Session flag set from Home → "Explore (demo mode)". */
 const DEMO_KEY = 'fafo_demo';
 
@@ -11,9 +13,9 @@ export const DEMO_SELLER = {
   id: DEMO_SELLER_ID,
   sellerMode: 'demo',
   shopName: 'Demo Street Kitchen',
-  ownerName: 'Alex Demo',
-  phone: '+919999000001',
-  address: 'Demo Bazaar, Bengaluru',
+  ownerName: 'Sample Owner',
+  phone: '+910000000001',
+  address: '123 Sample Lane, Demo City',
   slots: 0,
   isLive: false,
   isBlocked: false,
@@ -54,12 +56,12 @@ function demoOrder(id, status, buyerPhone, buyerName, items, total, source = 'ap
 }
 
 export const DEMO_ORDERS = [
-  demoOrder('demo-o-1', 'new', '+919876543210', 'Riya', [{ name: 'Masala Dosa', price: 80, qty: 2 }], 160, 'app'),
+  demoOrder('demo-o-1', 'new', '+910000000101', 'Demo Buyer A', [{ name: 'Masala Dosa', price: 80, qty: 2 }], 160, 'app'),
   demoOrder(
     'demo-o-2',
     'confirmed',
-    '+919811122233',
-    'Sam',
+    '+910000000102',
+    'Demo Buyer B',
     [{ name: 'Idli', price: 40, qty: 3 }],
     120,
     'app',
@@ -67,23 +69,23 @@ export const DEMO_ORDERS = [
   demoOrder(
     'demo-o-3',
     'preparing',
-    '+919900011122',
-    'Walk-in',
+    '+910000000103',
+    'Walk-in (demo)',
     [{ name: 'Combo Lunch', price: 199, qty: 1 }],
     199,
     'quick',
   ),
-  demoOrder('demo-o-4', 'ready', '+919955566677', 'Meera', [{ name: 'Coffee', price: 30, qty: 2 }], 60, 'app'),
+  demoOrder('demo-o-4', 'ready', '+910000000104', 'Demo Buyer C', [{ name: 'Coffee', price: 30, qty: 2 }], 60, 'app'),
   demoOrder(
     'demo-o-5',
     'completed',
-    '+919944433322',
-    'Kiran',
+    '+910000000105',
+    'Demo Buyer D',
     [{ name: 'Parotta', price: 45, qty: 4 }],
     180,
     'app',
   ),
-  demoOrder('demo-o-6', 'cancelled', '+919933300011', 'Guest', [{ name: 'Vada', price: 20, qty: 1 }], 20, 'app'),
+  demoOrder('demo-o-6', 'cancelled', '+910000000106', 'Demo Guest', [{ name: 'Vada', price: 20, qty: 1 }], 20, 'app'),
 ];
 
 export const DEMO_PRODUCTS = [
@@ -121,6 +123,42 @@ export const DEMO_COMBOS = [
     price: 199,
     productIds: ['demo-p-1', 'demo-p-2'],
     imageUrl: '',
+  },
+];
+
+export const DEMO_MENU_GROUPS = [
+  {
+    id: 'demo-mg-1',
+    sellerId: DEMO_SELLER_ID,
+    name: 'Sample menu',
+    menuName: 'Sample menu',
+    productIds: ['demo-p-1', 'demo-p-2'],
+    itemIds: ['demo-p-1', 'demo-p-2'],
+    comboIds: ['demo-c-1'],
+    schedulePreset: 'all',
+    rawDays: [],
+    days: resolveMenuDays('all', []),
+    startTime: '09:00',
+    endTime: '22:00',
+    isActive: true,
+    active: true,
+    manualOverride: false,
+    sortOrder: 0,
+    slug: 'sample-menu',
+  },
+];
+
+export const DEMO_GLOBAL_CUISINE_CATEGORIES = [
+  { id: 'demo-gcu-1', name: 'South Indian', sortOrder: 1, active: true },
+];
+
+export const DEMO_GLOBAL_MENU_CATEGORIES = [
+  {
+    id: 'demo-gmu-1',
+    name: 'Breakfast › Classics',
+    sortOrder: 1,
+    active: true,
+    parentCuisineId: 'demo-gcu-1',
   },
 ];
 

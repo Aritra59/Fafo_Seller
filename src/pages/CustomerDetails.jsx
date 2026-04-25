@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Download } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { OrderMiniCard } from '../components/OrderMiniCard';
+import { isDemoExplorer } from '../constants/demoMode';
 import { useSeller } from '../hooks/useSeller';
 import { reverseGeocodeLatLng } from '../services/geocode';
 import {
@@ -64,6 +66,7 @@ function orderBelongsToProfile(order, profile) {
 
 export function CustomerDetails() {
   const { customerId } = useParams();
+  const demoReadOnly = isDemoExplorer();
   const { seller, sellerId, loading: sellerLoading, error: sellerError } = useSeller();
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -144,6 +147,10 @@ export function CustomerDetails() {
       setLocLabel('');
       return undefined;
     }
+    if (demoReadOnly) {
+      setLocLabel('');
+      return undefined;
+    }
     if (profile.addressStr) {
       setLocLabel(profile.addressStr.split(',').slice(0, 2).join(',').trim());
       return undefined;
@@ -164,7 +171,7 @@ export function CustomerDetails() {
     return () => {
       cancelled = true;
     };
-  }, [profile]);
+  }, [profile, demoReadOnly]);
 
   const since = profile ? formatMonthYear(profile.firstOrderMs) : '—';
   const aov =
@@ -204,7 +211,6 @@ export function CustomerDetails() {
   if (!seller) {
     return (
       <div className="customer-detail-page card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Customer</h1>
         <p className="muted" style={{ margin: 0 }}>
           Set up your shop first.
         </p>
@@ -241,7 +247,6 @@ export function CustomerDetails() {
         <Link to="/customers" className="customer-detail-back muted">
           ← Customers
         </Link>
-        <h1 className="customer-detail-page__title">Customer details</h1>
       </header>
 
       <section className="customer-detail-hero card">
@@ -299,6 +304,7 @@ export function CustomerDetails() {
           <button
             type="button"
             className="btn btn-ghost customer-detail-actions__wa"
+            disabled={demoReadOnly}
             onClick={() => openWhatsApp(profile.displayPhone)}
           >
             WhatsApp
@@ -306,6 +312,7 @@ export function CustomerDetails() {
           <button
             type="button"
             className="btn btn-primary customer-detail-actions__call"
+            disabled={demoReadOnly}
             onClick={() => openCall(profile.displayPhone)}
           >
             Call
@@ -334,15 +341,7 @@ export function CustomerDetails() {
             <div className="order-history-summary__row order-history-summary__row--main">
               <span className="order-history-summary__amount">{formatRupee(historyTotal)}</span>
               <span className="order-history-summary__dl-icon" aria-hidden title="Export coming soon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path
-                    d="M12 3v12m0 0l4-4m-4 4l-4-4M4 21h16"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <Download size={22} strokeWidth={2} />
               </span>
             </div>
           </div>

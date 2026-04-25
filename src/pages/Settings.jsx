@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
+import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import { useSeller } from '../hooks/useSeller';
-import { changeSellerShopLoginPassword, updateSellerDocument } from '../services/firestore';
+import { updateSellerDocument } from '../services/firestore';
 import {
   normalizeShopOpenManualMode,
   resolveShopOpenNow,
@@ -13,7 +14,6 @@ import {
   uploadShopLogoJpeg,
   uploadUpiQrJpeg,
 } from '../services/storage';
-import { buildUpiPayUrl } from '../services/upi';
 import { PublicShopAccessSection } from '../components/PublicShopAccessSection';
 
 const TABS = [
@@ -49,19 +49,15 @@ export function Settings() {
 
   const [upiId, setUpiId] = useState('');
   const [upiName, setUpiName] = useState('');
-  const [upiPhone, setUpiPhone] = useState('');
   const [qrImage, setQrImage] = useState('');
   const [qrUploadBusy, setQrUploadBusy] = useState(false);
-  const [upiPreviewAmount, setUpiPreviewAmount] = useState('1');
 
   const [orderReadyTemplate, setOrderReadyTemplate] = useState('');
   const [templatesJson, setTemplatesJson] = useState('{}');
 
-  const [shopPwCurrent, setShopPwCurrent] = useState('');
-  const [shopPwNew, setShopPwNew] = useState('');
-  const [shopPwNew2, setShopPwNew2] = useState('');
-  const [shopPwBusy, setShopPwBusy] = useState(false);
-  const [shopPwMsg, setShopPwMsg] = useState('');
+  const demo = isDemoExplorer();
+  const settingsTabLabel = TABS.find((t) => t.id === tab)?.label ?? '';
+  useRegisterPageTitleSuffix(settingsTabLabel);
 
   useEffect(() => {
     if (!seller) return;
@@ -102,7 +98,6 @@ export function Settings() {
     );
     setUpiId(seller.upiId ?? '');
     setUpiName(seller.upiName ?? '');
-    setUpiPhone(seller.upiPhone ?? '');
     setQrImage(seller.qrImage ?? '');
     setOrderReadyTemplate(seller.orderReadyTemplate ?? '');
     try {
@@ -132,7 +127,7 @@ export function Settings() {
     if (!sellerId) return;
     const m = normalizeShopOpenManualMode(mode);
     setShopOpenManualMode(m);
-    if (isDemoExplorer()) {
+    if (demo) {
       setSaveMsg('Demo mode is read-only — sign in to apply.');
       return;
     }
@@ -229,7 +224,6 @@ export function Settings() {
       await updateSellerDocument(sellerId, {
         upiId,
         upiName,
-        upiPhone,
         qrImage,
         qrCodeUrl: qrImage,
       });
@@ -289,49 +283,6 @@ export function Settings() {
     }
   }
 
-  async function saveShopLoginPassword(e) {
-    e.preventDefault();
-    if (!sellerId) return;
-    setShopPwBusy(true);
-    setShopPwMsg('');
-    const hasPwd =
-      seller &&
-      typeof seller.password === 'string' &&
-      String(seller.password).length > 0;
-    if (isDemoExplorer()) {
-      setShopPwMsg('Demo mode is read-only — sign in to change password.');
-      setShopPwBusy(false);
-      return;
-    }
-    const nw = shopPwNew.trim();
-    const nw2 = shopPwNew2.trim();
-    if (nw.length < 6) {
-      setShopPwMsg('New password must be at least 6 characters.');
-      setShopPwBusy(false);
-      return;
-    }
-    if (nw !== nw2) {
-      setShopPwMsg('New passwords do not match.');
-      setShopPwBusy(false);
-      return;
-    }
-    try {
-      await changeSellerShopLoginPassword(sellerId, {
-        currentPassword: hasPwd ? shopPwCurrent : '',
-        newPassword: nw,
-      });
-      setShopPwMsg('Shop login password updated.');
-      setShopPwCurrent('');
-      setShopPwNew('');
-      setShopPwNew2('');
-      reload();
-    } catch (err) {
-      setShopPwMsg(err.message ?? 'Could not update password.');
-    } finally {
-      setShopPwBusy(false);
-    }
-  }
-
   async function saveTemplates(e) {
     e.preventDefault();
     if (!sellerId) return;
@@ -385,7 +336,6 @@ export function Settings() {
   if (!seller) {
     return (
       <div className="settings-page card stack">
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Settings</h1>
         <Link to="/onboarding" className="btn btn-primary">
           Set up shop
         </Link>
@@ -393,16 +343,8 @@ export function Settings() {
     );
   }
 
-  const demo = isDemoExplorer();
-
   return (
     <div className="settings-page">
-      <header className="settings-page-header">
-        <h1 style={{ margin: 0, fontSize: '1.35rem', letterSpacing: '-0.02em' }}>
-          Settings
-        </h1>
-      </header>
-
       <div className="settings-page-tabs" role="tablist">
         {TABS.map((t) => (
           <button
@@ -412,12 +354,14 @@ export function Settings() {
             aria-selected={tab === t.id}
             className={`settings-page-tab${tab === t.id ? ' settings-page-tab--active' : ''}`}
             onClick={() => setTab(t.id)}
+            disabled={demo}
           >
             {t.label}
           </button>
         ))}
       </div>
 
+      <fieldset className="fieldset-reset" disabled={demo}>
       {saveMsg ? (
         <p
           className={
@@ -426,17 +370,6 @@ export function Settings() {
           style={{ margin: 0 }}
         >
           {saveMsg}
-        </p>
-      ) : null}
-
-      {shopPwMsg ? (
-        <p
-          className={
-            /fail|Could not|incorrect|match|read-only|at least/i.test(shopPwMsg) ? 'error' : 'muted'
-          }
-          style={{ margin: 0 }}
-        >
-          {shopPwMsg}
         </p>
       ) : null}
 
@@ -708,18 +641,6 @@ export function Settings() {
             />
           </div>
           <div className="add-item-field">
-            <label className="label" htmlFor="set-upi-phone">
-              UPI phone (optional)
-            </label>
-            <input
-              id="set-upi-phone"
-              className="input"
-              type="tel"
-              value={upiPhone}
-              onChange={(e) => setUpiPhone(e.target.value)}
-            />
-          </div>
-          <div className="add-item-field">
             <label className="label" htmlFor="set-qr-file">
               Upload UPI QR (JPEG to Storage)
             </label>
@@ -733,66 +654,6 @@ export function Settings() {
             />
             {qrUploadBusy ? <p className="muted" style={{ margin: 0 }}>Uploading…</p> : null}
           </div>
-          <div className="add-item-field">
-            <label className="label" htmlFor="set-qr">
-              QR image URL (optional override)
-            </label>
-            <input
-              id="set-qr"
-              className="input"
-              value={qrImage}
-              onChange={(e) => setQrImage(e.target.value)}
-              placeholder="https://…"
-            />
-          </div>
-          {qrImage.trim() ? (
-            <div className="add-item-field">
-              <span className="label">QR preview</span>
-              <img
-                src={qrImage.trim()}
-                alt="Saved UPI QR"
-                className="settings-qr-preview"
-                loading="lazy"
-              />
-            </div>
-          ) : null}
-          <div className="add-item-field">
-            <label className="label" htmlFor="set-upi-amt">
-              Test amount for UPI link (₹)
-            </label>
-            <input
-              id="set-upi-amt"
-              className="input"
-              type="number"
-              min="0"
-              step="0.01"
-              value={upiPreviewAmount}
-              onChange={(e) => setUpiPreviewAmount(e.target.value)}
-            />
-          </div>
-          {upiId.trim() ? (
-            <p className="muted" style={{ margin: 0, fontSize: '0.8125rem', wordBreak: 'break-all' }}>
-              Buyer deeplink example:{' '}
-              <a
-                href={buildUpiPayUrl({
-                  pa: upiId.trim(),
-                  pn: upiName.trim(),
-                  am: String(
-                    Number.isFinite(Number(upiPreviewAmount)) ? Number(upiPreviewAmount) : 1,
-                  ),
-                })}
-                className="settings-upi-link"
-              >
-                {buildUpiPayUrl({
-                  pa: upiId.trim(),
-                  pn: upiName.trim(),
-                  am: String(
-                    Number.isFinite(Number(upiPreviewAmount)) ? Number(upiPreviewAmount) : 1,
-                  ),
-                })}
-              </a>
-            </p>
-          ) : null}
           {demo ? (
             <p className="muted" style={{ margin: 0 }}>
               Demo mode is read-only — sign in to save UPI details.
@@ -807,73 +668,6 @@ export function Settings() {
       {tab === 'public' ? (
         <div className="stack settings-page-public-wrap" style={{ gap: '0.75rem' }}>
           <PublicShopAccessSection seller={seller} sellerId={sellerId} readOnly={demo} />
-          <form className="card stack settings-page-form" onSubmit={saveShopLoginPassword}>
-            <h2 className="settings-section-h2" style={{ margin: 0, fontSize: '1rem' }}>
-              Shop code login
-            </h2>
-            <p className="muted" style={{ margin: 0, fontSize: '0.9375rem' }}>
-              Password used with <strong>Shop code</strong> sign-in (separate from your Google or phone
-              account).
-            </p>
-            {seller &&
-            typeof seller.password === 'string' &&
-            String(seller.password).length > 0 ? (
-              <div className="add-item-field">
-                <label className="label" htmlFor="set-shop-pw-current">
-                  Current password
-                </label>
-                <input
-                  id="set-shop-pw-current"
-                  className="input"
-                  type="password"
-                  autoComplete="current-password"
-                  value={shopPwCurrent}
-                  onChange={(e) => setShopPwCurrent(e.target.value)}
-                />
-              </div>
-            ) : (
-              <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-                No shop password on file yet — set one here to enable shop-code login, or complete
-                onboarding with a password if you are new.
-              </p>
-            )}
-            <div className="add-item-field">
-              <label className="label" htmlFor="set-shop-pw-new">
-                New password
-              </label>
-              <input
-                id="set-shop-pw-new"
-                className="input"
-                type="password"
-                autoComplete="new-password"
-                value={shopPwNew}
-                onChange={(e) => setShopPwNew(e.target.value)}
-                minLength={6}
-              />
-            </div>
-            <div className="add-item-field">
-              <label className="label" htmlFor="set-shop-pw-new2">
-                Confirm new password
-              </label>
-              <input
-                id="set-shop-pw-new2"
-                className="input"
-                type="password"
-                autoComplete="new-password"
-                value={shopPwNew2}
-                onChange={(e) => setShopPwNew2(e.target.value)}
-                minLength={6}
-              />
-            </div>
-            {demo ? (
-              <p className="muted" style={{ margin: 0 }}>
-                Demo mode is read-only.
-              </p>
-            ) : null}
-            <button type="submit" className="btn btn-primary" disabled={shopPwBusy || demo}>
-              {shopPwBusy ? 'Saving…' : 'Update shop login password'}
-            </button>
-          </form>
         </div>
       ) : null}
 
@@ -915,6 +709,7 @@ export function Settings() {
           </button>
         </form>
       ) : null}
+      </fieldset>
 
       <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>

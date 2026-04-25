@@ -12,7 +12,6 @@ export function Demo() {
 
   return (
     <div className="card stack" style={{ maxWidth: 520, margin: '0 auto' }}>
-      <h1 style={{ margin: 0, fontSize: '1.35rem' }}>Demo mode</h1>
       <p className="muted" style={{ margin: 0 }}>
         {demo
           ? 'You are exploring FaFo with mock data. Sign in when you are ready to sync a real shop.'

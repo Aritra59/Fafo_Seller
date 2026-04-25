@@ -12,6 +12,10 @@ import {
   verifyPhoneOtp,
 } from '../firebase/phoneConfirmation';
 import {
+  releaseAuthRecaptchaSession,
+  setAuthRecaptchaSession,
+} from '../firebase/authRecaptchaSession';
+import {
   clearRecaptchaDom,
   createInvisibleRecaptchaVerifier,
   disposeRecaptchaVerifier,
@@ -31,9 +35,11 @@ function toIndiaE164(digits10) {
 }
 
 function disposeVerifierSession(verifierRef, getContainer) {
+  const v = verifierRef.current;
   const c = getContainer();
-  disposeRecaptchaVerifier(verifierRef.current, c);
+  disposeRecaptchaVerifier(v, c);
   verifierRef.current = null;
+  releaseAuthRecaptchaSession(v);
 }
 
 export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
@@ -80,12 +86,20 @@ export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
 
     let cancelled = false;
 
-    disposeRecaptchaVerifier(verifierRef.current, container);
+    const prevVerifier = verifierRef.current;
+    disposeRecaptchaVerifier(prevVerifier, container);
     verifierRef.current = null;
+    releaseAuthRecaptchaSession(prevVerifier);
 
     (async () => {
       try {
         logPhoneAuth('verifier:creating (invisible)', { verifierTick });
+        await new Promise((r) => {
+          requestAnimationFrame(() => r());
+        });
+        if (cancelled || !container.isConnected) {
+          return;
+        }
         const verifier = await createInvisibleRecaptchaVerifier(auth, container, {
           onSolved: () => {
             logPhoneAuth('captcha:solved');
@@ -94,18 +108,21 @@ export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
             if (cancelled) return;
             logPhoneAuth('captcha:expired');
             setError('Verification expired. Tap Send OTP again.');
-            const el = containerRef.current;
-            disposeRecaptchaVerifier(verifierRef.current, el);
+            const v = verifierRef.current;
+            disposeRecaptchaVerifier(v, container);
             verifierRef.current = null;
-            if (el) clearRecaptchaDom(el);
+            releaseAuthRecaptchaSession(v);
+            clearRecaptchaDom(container);
             setVerifierTick((t) => t + 1);
           },
         });
         if (!cancelled) {
           verifierRef.current = verifier;
+          setAuthRecaptchaSession(verifier, container);
           logPhoneAuth('verifier:created (invisible)', { verifierTick });
         } else {
           disposeRecaptchaVerifier(verifier, container);
+          releaseAuthRecaptchaSession(verifier);
           logPhoneAuth('verifier:create-aborted (strict/unmount race)');
         }
       } catch (err) {
@@ -118,9 +135,10 @@ export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
 
     return () => {
       cancelled = true;
-      const el = containerRef.current ?? document.getElementById(containerId);
-      disposeRecaptchaVerifier(verifierRef.current, el);
+      const v = verifierRef.current;
+      disposeRecaptchaVerifier(v, container);
       verifierRef.current = null;
+      releaseAuthRecaptchaSession(v);
     };
   }, [step, verifierTick, containerId]);
 
@@ -204,8 +222,10 @@ export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
         logRecentAuthResourceUrls();
       }
       setError(formatPhoneAuthError(err));
-      disposeRecaptchaVerifier(verifierRef.current, container);
+      const vFail = verifierRef.current;
+      disposeRecaptchaVerifier(vFail, container);
       verifierRef.current = null;
+      releaseAuthRecaptchaSession(vFail);
       clearRecaptchaDom(container);
       clearPhoneConfirmationResult();
       setVerifierTick((t) => t + 1);
@@ -339,16 +359,19 @@ export function PhoneSignIn({ onSuccess, phoneStepFooter = null }) {
   return (
     <div className="stack">
       <p className="auth-lead muted" style={{ margin: 0 }}>
-        India mobile — tap <strong>Send OTP</strong>. reCAPTCHA runs invisibly in the
-        background.
+        India mobile — tap <strong>Send OTP</strong>. Verification uses an invisible reCAPTCHA
+        when allowed by your network; you may occasionally see a quick check if Google flags the
+        session.
       </p>
 
-      <div
-        id={containerId}
-        ref={containerRef}
-        className="fafo-recaptcha-container fafo-recaptcha-container--invisible"
-        aria-hidden
-      />
+      <div className="fafo-recaptcha-mount" key={verifierTick}>
+        <div
+          id={containerId}
+          ref={containerRef}
+          className="fafo-recaptcha-container fafo-recaptcha-container--invisible"
+          aria-hidden
+        />
+      </div>
 
       <form className="auth-form stack" onSubmit={handleSendCode} noValidate>
         <div>

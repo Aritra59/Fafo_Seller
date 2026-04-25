@@ -19,9 +19,12 @@ import {
 } from 'firebase/firestore';
 import {
   DEMO_COMBOS,
+  DEMO_GLOBAL_CUISINE_CATEGORIES,
+  DEMO_GLOBAL_MENU_CATEGORIES,
   DEMO_ORDERS,
   DEMO_PRODUCTS,
   DEMO_SELLER,
+  isDemoExplorer,
   isDemoSellerId,
 } from '../constants/demoMode';
 import { readPersistedSellerId } from '../constants/session';
@@ -867,6 +870,16 @@ export async function updateSellerDocument(sellerId, fields) {
       payload.menuSession = s;
     }
   }
+  if (fields.menuSessionOverrideGroupId !== undefined) {
+    const v = fields.menuSessionOverrideGroupId;
+    payload.menuSessionOverrideGroupId =
+      v == null || v === '' ? null : String(v).trim() || null;
+  }
+  if (fields.storefrontMenuGroupId !== undefined) {
+    const v = fields.storefrontMenuGroupId;
+    payload.storefrontMenuGroupId =
+      v == null || v === '' ? null : String(v).trim() || null;
+  }
   if (fields.qrCodeUrl !== undefined) {
     const u = fields.qrCodeUrl;
     payload.qrCodeUrl =
@@ -996,6 +1009,10 @@ export function subscribeProductsBySellerId(sellerId, onData, onError) {
  * Real-time `users` collection (buyer profiles). Used for name/photo/address on Customers.
  */
 export function subscribeUsersCollection(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([]);
+    return () => {};
+  }
   return onSnapshot(
     collection(db, 'users'),
     (snapshot) => {
@@ -1124,14 +1141,31 @@ export async function createCombo(sellerId, fields) {
     }
   }
 
+  let discountFlatAmount;
+  if (Object.prototype.hasOwnProperty.call(fields, 'discountFlatAmount')) {
+    const d = fields.discountFlatAmount;
+    if (d == null || d === '') {
+      discountFlatAmount = null;
+    } else {
+      const n = Number(d);
+      discountFlatAmount = Number.isFinite(n) && n >= 0 ? n : null;
+    }
+  }
+
+  const imageUrls = Array.isArray(fields.imageUrls)
+    ? fields.imageUrls.map((u) => String(u ?? '').trim()).filter(Boolean)
+    : null;
+
   const ref = await addDoc(collection(db, 'combos'), {
     sellerId: sid,
     name,
     price,
     productIds,
     imageUrl,
+    ...(imageUrls && imageUrls.length ? { imageUrls } : {}),
     ...(discountLabel !== undefined ? { discountLabel } : {}),
     ...(discountPercent !== undefined ? { discountPercent } : {}),
+    ...(discountFlatAmount !== undefined ? { discountFlatAmount } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -1165,6 +1199,31 @@ export async function updateComboForSeller(comboId, sellerId, data) {
     ...data,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Delete a combo document after verifying `sellerId` matches.
+ */
+export async function deleteComboForSeller(comboId, sellerId) {
+  const cid = String(comboId ?? '').trim();
+  const sid = String(sellerId ?? '').trim();
+  if (!cid || !sid) {
+    throw new Error('Missing combo or seller.');
+  }
+  if (isDemoSellerId(sid)) {
+    throw new Error('Demo mode is read-only.');
+  }
+
+  const ref = doc(db, 'combos', cid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Combo not found.');
+  }
+  if (snap.data().sellerId !== sid) {
+    throw new Error('You cannot delete this combo.');
+  }
+
+  await deleteDoc(ref);
 }
 
 /**
@@ -1323,6 +1382,10 @@ export async function updateOrderStatus(orderId, sellerId, status) {
 }
 
 export function getCuisineCategoryLabel(product) {
+  const n = product?.cuisineCategoryName;
+  if (typeof n === 'string' && n.trim()) {
+    return n.trim();
+  }
   const c = product?.cuisineCategory;
   if (typeof c === 'string' && c.trim()) {
     return c.trim();
@@ -1331,6 +1394,9 @@ export function getCuisineCategoryLabel(product) {
 }
 
 export { UNCATEGORIZED_CUISINE };
+
+/** Sub-group under cuisine (Dosa, Idli, …) when not set on the product doc. */
+export const UNCATEGORIZED_MENU = 'Other';
 
 const CATEGORY_JOINER = ' › ';
 
@@ -1352,17 +1418,68 @@ export function parseStoredProductCategories(categoryStr) {
   };
 }
 
+/**
+ * Menu sub-category label (Dosa, Tea, …) from `menuCategoryName` / `menuCategory` / legacy `category` string.
+ */
+export function getProductMenuCategoryLabel(product) {
+  const named = product?.menuCategoryName;
+  if (typeof named === 'string' && named.trim()) {
+    return named.trim();
+  }
+  const direct = product?.menuCategory;
+  if (typeof direct === 'string' && direct.trim()) {
+    return direct.trim();
+  }
+  const { menuCategory, itemCategory } = parseStoredProductCategories(
+    typeof product?.category === 'string' ? product.category : '',
+  );
+  if (menuCategory) return menuCategory;
+  const cat = typeof product?.category === 'string' ? product.category.trim() : '';
+  if (cat && !cat.includes(CATEGORY_JOINER)) {
+    return cat;
+  }
+  if (itemCategory) return itemCategory;
+  return UNCATEGORIZED_MENU;
+}
+
 function normalizeProductFieldsInput(fields) {
   const name = String(fields.name ?? '').trim();
   const priceRaw = fields.price;
   const price =
     typeof priceRaw === 'number' ? priceRaw : Number(priceRaw);
   const description = String(fields.description ?? '').trim() || null;
-  const menuCat = String(fields.menuCategory ?? '').trim();
+
+  let cuisineCategoryId;
+  if (Object.prototype.hasOwnProperty.call(fields, 'cuisineCategoryId')) {
+    const v = fields.cuisineCategoryId;
+    cuisineCategoryId = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+  let cuisineCategoryName;
+  if (Object.prototype.hasOwnProperty.call(fields, 'cuisineCategoryName')) {
+    const v = fields.cuisineCategoryName;
+    cuisineCategoryName = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+  let menuCategoryId;
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuCategoryId')) {
+    const v = fields.menuCategoryId;
+    menuCategoryId = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+  let menuCategoryName;
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuCategoryName')) {
+    const v = fields.menuCategoryName;
+    menuCategoryName = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+
+  const menuCat =
+    menuCategoryName ||
+    String(fields.menuCategory ?? '').trim();
   const itemCat = String(fields.itemCategory ?? fields.category ?? '').trim();
   const categoryParts = [menuCat, itemCat].filter(Boolean);
   const category = categoryParts.length ? categoryParts.join(CATEGORY_JOINER) : null;
-  const cuisineCategory = String(fields.cuisineCategory ?? '').trim() || null;
+  const cuisineCategory =
+    cuisineCategoryName ||
+    String(fields.cuisineCategory ?? '').trim() ||
+    null;
   const prepTime = String(fields.prepTime ?? '').trim() || null;
   const qty = Number(fields.quantity);
   const quantity = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
@@ -1401,22 +1518,30 @@ function normalizeProductFieldsInput(fields) {
   if (Object.prototype.hasOwnProperty.call(fields, 'available')) {
     available = Boolean(fields.available);
   }
-  if (quantity === 0) {
-    available = false;
+
+  let menuGroupIds;
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuGroupIds')) {
+    const raw = fields.menuGroupIds;
+    menuGroupIds = Array.isArray(raw)
+      ? [...new Set(raw.map((x) => String(x ?? '').trim()).filter(Boolean))]
+      : [];
   }
 
   let menuGroupId;
-  if (Object.prototype.hasOwnProperty.call(fields, 'menuGroupId')) {
+  if (menuGroupIds !== undefined) {
+    menuGroupId = menuGroupIds.length ? menuGroupIds[0] : null;
+  } else if (Object.prototype.hasOwnProperty.call(fields, 'menuGroupId')) {
     const m = fields.menuGroupId;
     menuGroupId = m == null || m === '' ? null : String(m).trim();
   }
 
-  return {
+  const out = {
     name,
     price,
     description,
     category,
     cuisineCategory,
+    menuCategory: menuCat || null,
     tags: tagList,
     prepTime,
     quantity,
@@ -1425,7 +1550,21 @@ function normalizeProductFieldsInput(fields) {
     ...(discountPercent !== undefined ? { discountPercent } : {}),
     ...(imageUrl !== undefined ? { imageUrl } : {}),
     ...(menuGroupId !== undefined ? { menuGroupId } : {}),
+    ...(menuGroupIds !== undefined ? { menuGroupIds } : {}),
   };
+  if (Object.prototype.hasOwnProperty.call(fields, 'cuisineCategoryId')) {
+    out.cuisineCategoryId = cuisineCategoryId;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'cuisineCategoryName')) {
+    out.cuisineCategoryName = cuisineCategoryName;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuCategoryId')) {
+    out.menuCategoryId = menuCategoryId;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'menuCategoryName')) {
+    out.menuCategoryName = menuCategoryName;
+  }
+  return out;
 }
 
 function validateProductNormalized(normalized) {
@@ -1596,6 +1735,9 @@ export async function createBillingIntent({ sellerId, amount }) {
   if (!id || !Number.isFinite(amt) || amt <= 0) {
     throw new Error('Select a valid package and try again.');
   }
+  if (isDemoSellerId(id)) {
+    throw new Error('Demo mode is read-only. Sign in to recharge.');
+  }
 
   const ref = await addDoc(collection(db, 'billing'), {
     sellerId: id,
@@ -1648,6 +1790,14 @@ export function subscribeSellerById(sellerId, onData, onError) {
  * Admin defaults: `settings/{docId}` — slot rate, order fee %, trial days.
  */
 export function subscribeGlobalAppSettings(onData, onError, docId = DEFAULT_SETTINGS_DOC_ID) {
+  if (isDemoExplorer()) {
+    onData({
+      slotRatePerDay: 2,
+      orderFeePercent: 2,
+      trialDays: 15,
+    });
+    return () => {};
+  }
   const ref = doc(db, 'settings', docId);
   return onSnapshot(
     ref,
@@ -1674,12 +1824,165 @@ export function subscribeGlobalAppSettings(onData, onError, docId = DEFAULT_SETT
   );
 }
 
+const GLOBAL_CUISINE_CATEGORIES_COL = 'globalCuisineCategories';
+const GLOBAL_MENU_CATEGORIES_COL = 'globalMenuCategories';
+
+function isGlobalCategoryActive(data) {
+  if (data == null || typeof data !== 'object') return true;
+  if (Object.prototype.hasOwnProperty.call(data, 'active') && data.active === false) {
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'isActive') && data.isActive === false) {
+    return false;
+  }
+  return true;
+}
+
+function globalCategoryDisplayName(data, docId) {
+  const n = String(data?.name ?? data?.label ?? '').trim();
+  return n || docId;
+}
+
+/**
+ * @returns {{ id: string, name: string, sortOrder: number, active: boolean }[]}
+ */
+function mapGlobalCuisineSnapshot(snap) {
+  const rows = snap.docs
+    .map((d) => {
+      const data = d.data();
+      const active = isGlobalCategoryActive(data);
+      const name = globalCategoryDisplayName(data, d.id);
+      const sortOrder = Number(data.sortOrder);
+      return {
+        id: d.id,
+        name,
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 999,
+        active,
+      };
+    })
+    .filter((r) => r.name);
+  rows.sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  );
+  return rows;
+}
+
+/**
+ * @returns {{ id: string, name: string, sortOrder: number, active: boolean, parentCuisineId: string | null }[]}
+ */
+function mapGlobalMenuSnapshot(snap) {
+  const rows = snap.docs
+    .map((d) => {
+      const data = d.data();
+      const active = isGlobalCategoryActive(data);
+      const name = globalCategoryDisplayName(data, d.id);
+      const sortOrder = Number(data.sortOrder);
+      const rawParent =
+        data.parentCuisineId ?? data.parentCuisine ?? data.cuisineCategoryId ?? data.cuisineId ?? '';
+      const parentCuisineId = String(rawParent ?? '').trim() || null;
+      return {
+        id: d.id,
+        name,
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 999,
+        active,
+        parentCuisineId,
+      };
+    })
+    .filter((r) => r.name);
+  rows.sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  );
+  return rows;
+}
+
+/**
+ * Admin-managed cuisine categories (`globalCuisineCategories`). Sellers read only; select in UI.
+ * @param {(rows: { id: string, name: string, sortOrder: number, active: boolean }[]) => void} onData
+ */
+export function subscribeGlobalCuisineCategories(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([...DEMO_GLOBAL_CUISINE_CATEGORIES]);
+    return () => {};
+  }
+  const ref = collection(db, GLOBAL_CUISINE_CATEGORIES_COL);
+  const q = query(ref, limit(300));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(mapGlobalCuisineSnapshot(snap));
+    },
+    (err) => {
+      onError?.(err);
+      onData([]);
+    },
+  );
+}
+
+/**
+ * Admin-managed menu categories (`globalMenuCategories`). Optional `parentCuisineId` links a row to a cuisine.
+ * @param {(rows: { id: string, name: string, sortOrder: number, active: boolean, parentCuisineId: string | null }[]) => void} onData
+ */
+export function subscribeGlobalMenuCategories(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([...DEMO_GLOBAL_MENU_CATEGORIES]);
+    return () => {};
+  }
+  const ref = collection(db, GLOBAL_MENU_CATEGORIES_COL);
+  const q = query(ref, limit(400));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(mapGlobalMenuSnapshot(snap));
+    },
+    (err) => {
+      onError?.(err);
+      onData([]);
+    },
+  );
+}
+
+/**
+ * Menu categories for a cuisine: active rows whose parent reference matches `cuisineId`
+ * (Firestore doc id) or `cuisineDisplayName` (case-insensitive), e.g. legacy `parentCuisine` strings.
+ * If none are linked, returns all active menu categories (still sorted).
+ */
+export function filterGlobalMenuCategoriesByCuisine(
+  allMenus,
+  cuisineId,
+  cuisineDisplayName = '',
+) {
+  const menus = Array.isArray(allMenus) ? allMenus : [];
+  const activeMenus = menus.filter((m) => m.active !== false);
+  const cid = String(cuisineId ?? '').trim();
+  const cname = String(cuisineDisplayName ?? '').trim().toLowerCase();
+  const sortFn = (a, b) =>
+    a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+
+  if (!cid && !cname) {
+    return [...activeMenus].sort(sortFn);
+  }
+
+  const linked = activeMenus.filter((m) => {
+    const pref = String(m.parentCuisineId ?? '').trim();
+    if (!pref) return false;
+    if (cid && pref === cid) return true;
+    if (cname && pref.toLowerCase() === cname) return true;
+    return false;
+  });
+  const pool = linked.length > 0 ? linked : activeMenus;
+  return [...pool].sort(sortFn);
+}
+
 /**
  * Billing rows for a seller (newest first, capped client-side).
  */
 export function subscribeBillingBySellerId(sellerId, onData, onError) {
   const sid = String(sellerId ?? '').trim();
   if (!sid) {
+    onData([]);
+    return () => {};
+  }
+  if (isDemoSellerId(sid)) {
     onData([]);
     return () => {};
   }
@@ -1699,48 +2002,32 @@ export function subscribeBillingBySellerId(sellerId, onData, onError) {
   );
 }
 
-function distinctMenuBucketsFromProducts(rows) {
-  const set = new Set();
-  for (const p of rows) {
-    const { menuCategory } = parseStoredProductCategories(p.category);
-    const m = String(menuCategory ?? '').trim();
-    if (m) set.add(m);
-  }
-  return set.size;
-}
-
-function enabledMenuLayoutCount(menuLayouts) {
-  if (!menuLayouts || typeof menuLayouts !== 'object') {
-    return 0;
-  }
-  let n = 0;
-  for (const v of Object.values(menuLayouts)) {
-    if (v === true) n += 1;
-  }
-  return n;
-}
-
 /**
- * `slots` = active products + combos + enabled menu sections (or distinct menu names on products).
+ * `slots` = each active catalog item + each combo doc + each active menu (`menuGroups`).
  */
 export async function recomputeSellerSlotCount(sellerId) {
   const sid = String(sellerId ?? '').trim();
   if (!sid || isDemoSellerId(sid)) {
     return 0;
   }
-  const sellerSnap = await getDoc(doc(db, 'sellers', sid));
-  const seller = sellerSnap.exists() ? sellerSnap.data() : {};
   const productsQ = query(collection(db, 'products'), where('sellerId', '==', sid));
   const combosQ = query(collection(db, 'combos'), where('sellerId', '==', sid));
-  const [pSnap, cSnap] = await Promise.all([getDocs(productsQ), getDocs(combosQ)]);
+  const menusQ = query(collection(db, 'menuGroups'), where('sellerId', '==', sid));
+  const [pSnap, cSnap, mSnap] = await Promise.all([
+    getDocs(productsQ),
+    getDocs(combosQ),
+    getDocs(menusQ),
+  ]);
   const productRows = pSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const activeProducts = productRows.filter(
     (p) => p.available !== false && p.available !== 0,
   ).length;
   const comboCount = cSnap.size;
-  let menuCount = enabledMenuLayoutCount(seller.menuLayouts);
-  if (menuCount === 0) {
-    menuCount = distinctMenuBucketsFromProducts(productRows);
+  let menuCount = 0;
+  for (const d of mSnap.docs) {
+    const data = d.data();
+    if (data.active === false || data.isActive === false) continue;
+    menuCount += 1;
   }
   const total = activeProducts + comboCount + menuCount;
   await updateDoc(doc(db, 'sellers', sid), {

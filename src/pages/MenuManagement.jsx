@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MenuGroupsPanel } from '../components/menu/MenuGroupsPanel';
+import { MenusPanel } from '../components/menu/MenusPanel';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useSeller } from '../hooks/useSeller';
-import { subscribeProductsBySellerId } from '../services/firestore';
+import { subscribeCombosBySellerId, subscribeProductsBySellerId } from '../services/firestore';
 
 export function MenuManagement() {
   const { seller, sellerId, loading, error } = useSeller();
   const [products, setProducts] = useState([]);
+  const [combos, setCombos] = useState([]);
 
   useEffect(() => {
     if (!sellerId) {
@@ -18,6 +19,18 @@ export function MenuManagement() {
       sellerId,
       (rows) => setProducts(rows),
       () => setProducts([]),
+    );
+  }, [sellerId]);
+
+  useEffect(() => {
+    if (!sellerId) {
+      setCombos([]);
+      return undefined;
+    }
+    return subscribeCombosBySellerId(
+      sellerId,
+      (rows) => setCombos(rows),
+      () => setCombos([]),
     );
   }, [sellerId]);
 
@@ -43,13 +56,18 @@ export function MenuManagement() {
 
   return (
     <div className="stack" style={{ gap: '1rem' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Menu groups</h1>
-        <Link to="/menu?tab=menugroups" className="btn btn-ghost">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+        <Link to="/menu?tab=menus" className="btn btn-ghost">
           Back to menu
         </Link>
       </header>
-      <MenuGroupsPanel sellerId={sellerId} products={products} readOnly={isDemoExplorer()} />
+      <MenusPanel
+        sellerId={sellerId}
+        products={products}
+        combos={combos}
+        shopCode={seller.shopCode ?? seller.code ?? ''}
+        readOnly={isDemoExplorer()}
+      />
     </div>
   );
 }
