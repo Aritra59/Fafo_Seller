@@ -16,11 +16,10 @@ function formatRupee(n) {
 }
 
 export const CustomerCard = memo(function CustomerCard({ profile }) {
-  const { routeId, name, photoUrl, badge, totalOrders, totalSpent, displayPhone } = profile;
+  const { routeId, name, photoUrl, badge, totalOrders, totalSpent } = profile;
 
   const initial = String(name || 'C').trim().charAt(0).toUpperCase() || 'C';
   const since = profile.sinceLabel ?? '—';
-  const phone = displayPhone || '—';
 
   return (
     <Link to={`/customers/${encodeURIComponent(routeId)}`} className="customer-premium-card">
@@ -42,44 +41,49 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
         <span className={badgeClass(badge)}>{badge}</span>
       </div>
 
-      <p className="customer-premium-card__name">{name}</p>
-      <p className="customer-premium-card__phone muted" style={{ margin: '0.15rem 0 0' }}>
-        {phone}
+      <p className="customer-premium-card__name" title={name || undefined}>
+        {name}
       </p>
 
-      <div className="customer-premium-card__stats">
-        <span className="customer-premium-card__stat">
+      <div className="customer-premium-card__stats" aria-label="Order totals">
+        <p className="customer-premium-card__stat customer-premium-card__stat--orders">
           <Package
-            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--orders"
-            size={15}
+            className="customer-premium-card__lucide customer-premium-card__lucide--package"
+            size={16}
             strokeWidth={2.25}
             aria-hidden
           />
-          <span className="customer-premium-card__stat-label">Orders:</span>
-          <span className="customer-premium-card__stat-value">{totalOrders}</span>
-        </span>
-        <span className="customer-premium-card__stat">
+          <span className="customer-premium-card__stat-inner">
+            <span className="customer-premium-card__lbl">Orders: </span>
+            <span className="customer-premium-card__num">{totalOrders}</span>
+          </span>
+        </p>
+        <p className="customer-premium-card__stat customer-premium-card__stat--total">
           <IndianRupee
-            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--total"
-            size={15}
+            className="customer-premium-card__lucide customer-premium-card__lucide--rupee"
+            size={16}
             strokeWidth={2.25}
             aria-hidden
           />
-          <span className="customer-premium-card__stat-label">Total:</span>
-          <span className="customer-premium-card__stat-rupee">{formatRupee(totalSpent)}</span>
-        </span>
+          <span className="customer-premium-card__stat-inner">
+            <span className="customer-premium-card__lbl">Total: </span>
+            <span className="customer-premium-card__amt">{formatRupee(totalSpent)}</span>
+          </span>
+        </p>
       </div>
 
-      <div className="customer-premium-card__lower">
-        <p className="customer-premium-card__since">
+      <div className="customer-premium-card__foot">
+        <p className="customer-premium-card__stat customer-premium-card__stat--since" title={since && since !== '—' ? `Since ${since}` : undefined}>
           <CalendarDays
-            className="customer-premium-card__icon-lucide customer-premium-card__icon-lucide--since"
-            size={14}
+            className="customer-premium-card__lucide customer-premium-card__lucide--since"
+            size={15}
             strokeWidth={2.1}
             aria-hidden
           />
-          <span className="customer-premium-card__since-label">Since:</span>
-          <span className="customer-premium-card__since-val">{since}</span>
+          <span className="customer-premium-card__stat-inner">
+            <span className="customer-premium-card__lbl">Since: </span>
+            <span className="customer-premium-card__date">{since}</span>
+          </span>
         </p>
       </div>
     </Link>
