@@ -270,24 +270,19 @@
 
 .analytics-kpi-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
   margin-bottom: 1.15rem;
   align-items: stretch;
-}
-
-@media (min-width: 480px) {
-  .analytics-kpi-grid {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
 }
 
 .analytics-kpi-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 152px;
-  padding: 0.75rem 0.68rem;
+  min-height: 0;
+  min-width: 0;
+  padding: 0.55rem 0.45rem;
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border) 70%);
@@ -313,11 +308,15 @@
 
 .analytics-kpi-title {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
   letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .analytics-kpi-tag {
@@ -333,7 +332,7 @@
 
 .analytics-kpi-cur-val {
   color: var(--text);
-  font-size: 0.9rem;
+  font-size: 0.75rem;
 }
 
 .analytics-kpi-delta {

@@ -2,14 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { isDemoExplorer } from '../constants/demoMode';
 import { logShopVisit } from '../services/firestore';
 import { normalizeShopCode } from '../utils/shopCode';
-import {
-  publicShopByCodeUrl,
-  publicShopBySlugUrl,
-  publicShopQrTargetUrl,
-  publicShopShareUrl,
-  publicShopWhatsappLineUrl,
-} from '../utils/publicShopUrl';
-import { downloadPublicShopQrPng } from '../utils/shopQr';
+import { publicShopByCodeUrl, publicShopQrTargetUrl, publicShopShareUrl } from '../utils/publicShopUrl';
+import { buildPublicShopQrPngBlob, downloadPublicShopQrPng } from '../utils/shopQr';
 
 /**
  * @param {object} props
@@ -24,17 +18,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
     () => (seller ? normalizeShopCode(seller.shopCode ?? seller.code ?? '') : ''),
     [seller],
   );
-  const slug = useMemo(
-    () =>
-      (seller && typeof seller.shopSlug === 'string' && seller.shopSlug.trim()
-        ? seller.shopSlug.trim().toLowerCase()
-        : ''
-      ).trim(),
-    [seller],
-  );
-
   const linkByCode = useMemo(() => (code ? publicShopByCodeUrl(code) : ''), [code]);
-  const linkBySlug = useMemo(() => (slug ? publicShopBySlugUrl(slug) : ''), [slug]);
   const shareUrl = useMemo(() => (code ? publicShopShareUrl(code) : ''), [code]);
   const qrUrlString = useMemo(
     () => (code ? publicShopQrTargetUrl(code) : ''),
@@ -95,13 +79,37 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
     }
   }, [code, sid]);
 
-  const onWhatsappClick = useCallback(() => {
+  const onShareWhatsapp = useCallback(async () => {
     const id = String(sid ?? '').trim();
     if (id && !isDemoExplorer()) {
       const dev = typeof navigator !== 'undefined' ? navigator.userAgent : '';
       void logShopVisit({ sellerId: id, source: 'whatsapp', device: dev, path: 'settings_whatsapp_share' });
     }
-  }, [sid]);
+    if (!code || !qrUrlString || !linkByCode) {
+      return;
+    }
+    const line1 = `Order directly from ${shopName}`;
+    const text = `${line1}\n${linkByCode}`;
+    const safe = `fafo-shop-qr-${code.toLowerCase()}.png`;
+    try {
+      const blob = await buildPublicShopQrPngBlob(qrUrlString);
+      const file = new File([blob], safe, { type: 'image/png' });
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ title: line1, text, files: [file] });
+          return;
+        }
+      }
+    } catch {
+      // fall back below
+    }
+    const extra = `${text}\n\nTip: if the image did not attach, use Download QR above and send it in WhatsApp.`;
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(extra)}`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }, [code, qrUrlString, linkByCode, shopName, sid]);
 
   const onShare = useCallback(async () => {
     if (!shareUrl) return;
@@ -128,17 +136,11 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
           Public shop access
         </h2>
         <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
-          A shop code will appear after setup. It is used to build your public menu link and QR
-          code.
+          Your public menu link and QR will appear after setup.
         </p>
       </div>
     );
   }
-
-  const waLineUrl = publicShopWhatsappLineUrl(code);
-  const wa = `https://wa.me/?text=${encodeURIComponent(
-    `Order directly from ${shopName}\n${waLineUrl}`,
-  )}`;
 
   return (
     <section
@@ -152,26 +154,6 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       >
         Public shop access
       </h2>
-      <div className="public-shop-code-block">
-        <span className="label" style={{ marginBottom: '0.25rem' }}>
-          Shop code
-        </span>
-        <div className="public-shop-code-block-inner">
-          <p className="public-shop-code-block-value" translate="no">
-            {code}
-          </p>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={readOnly}
-            style={{ fontSize: '0.8125rem', flexShrink: 0 }}
-            onClick={() => void copy(code)}
-          >
-            Copy code
-          </button>
-        </div>
-      </div>
-      {copyMsg ? <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>{copyMsg}</p> : null}
       <div className="add-item-field" style={{ margin: 0 }}>
         <span className="label">Shop link</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -186,22 +168,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
           </button>
         </div>
       </div>
-      {linkBySlug ? (
-        <div className="add-item-field" style={{ margin: 0 }}>
-          <span className="label">Short link</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <input className="input" readOnly value={linkBySlug} style={{ flex: '1 1 12rem' }} />
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={readOnly}
-              onClick={() => void copy(linkBySlug)}
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {copyMsg ? <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>{copyMsg}</p> : null}
       <div className="add-item-field" style={{ margin: 0 }}>
         <span className="label">QR code</span>
         {storedQr ? (
@@ -243,16 +210,15 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
         >
           Preview customer shop
         </button>
-        <a
+        <button
+          type="button"
           className="btn btn-ghost"
-          href={wa}
-          target="_blank"
-          rel="noopener noreferrer"
+          disabled={readOnly}
           aria-label="Share on WhatsApp"
-          onClick={onWhatsappClick}
+          onClick={() => void onShareWhatsapp()}
         >
           Share WhatsApp
-        </a>
+        </button>
         <button type="button" className="btn btn-ghost" disabled={readOnly} onClick={onShare}>
           Share
         </button>

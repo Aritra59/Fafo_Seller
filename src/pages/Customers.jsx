@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
 import { CustomerCard } from '../components/CustomerCard';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -214,16 +213,6 @@ export function Customers() {
       <p className="muted" style={{ margin: '1rem 0 0', fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
-
-      {!demoReadOnly ? (
-        <Link
-          to="/orders"
-          className="orders-quick-fab orders-quick-fab--link"
-          aria-label="Go to orders for quick order"
-        >
-          <Plus size={26} strokeWidth={2.25} aria-hidden />
-        </Link>
-      ) : null}
     </div>
   );
 }

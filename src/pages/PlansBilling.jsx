@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import { useSeller } from '../hooks/useSeller';
@@ -166,6 +166,7 @@ export function PlansBilling() {
   const [lastPaidAmount, setLastPaidAmount] = useState(null);
   const [slotBusy, setSlotBusy] = useState(false);
   const [orders, setOrders] = useState([]);
+  const location = useLocation();
 
   const demoExplore = isDemoExplorer();
   useRegisterPageTitleSuffix(billingViewTab === 'recharge' ? 'Recharge' : 'History');
@@ -177,6 +178,29 @@ export function PlansBilling() {
     );
     return () => unsub();
   }, []);
+
+  /** Recompute slot count once per navigation to /billing (matches manual refresh). */
+  useEffect(() => {
+    if (!sellerId) return;
+    if (String(location.pathname || '').replace(/\/+$/, '') !== '/billing') return;
+    if (demoExplore) return;
+    let cancelled = false;
+    (async () => {
+      setSlotBusy(true);
+      try {
+        await recomputeSellerSlotCount(sellerId);
+        if (!cancelled) reload();
+      } catch (e) {
+        if (!cancelled) setPayError(e?.message ?? 'Could not refresh slots.');
+      } finally {
+        if (!cancelled) setSlotBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setSlotBusy(false);
+    };
+  }, [sellerId, location.key, demoExplore, location.pathname, reload]);
 
   useEffect(() => {
     if (!sellerId) {

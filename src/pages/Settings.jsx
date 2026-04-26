@@ -12,7 +12,6 @@ import {
   compressImageToJpegBlob,
   isAcceptedImageType,
   uploadShopLogoJpeg,
-  uploadUpiQrJpeg,
 } from '../services/storage';
 import { PublicShopAccessSection } from '../components/PublicShopAccessSection';
 
@@ -49,8 +48,6 @@ export function Settings() {
 
   const [upiId, setUpiId] = useState('');
   const [upiName, setUpiName] = useState('');
-  const [qrImage, setQrImage] = useState('');
-  const [qrUploadBusy, setQrUploadBusy] = useState(false);
 
   const [orderReadyTemplate, setOrderReadyTemplate] = useState('');
   const [templatesJson, setTemplatesJson] = useState('{}');
@@ -98,7 +95,6 @@ export function Settings() {
     );
     setUpiId(seller.upiId ?? '');
     setUpiName(seller.upiName ?? '');
-    setQrImage(seller.qrImage ?? '');
     setOrderReadyTemplate(seller.orderReadyTemplate ?? '');
     try {
       setTemplatesJson(
@@ -224,8 +220,6 @@ export function Settings() {
       await updateSellerDocument(sellerId, {
         upiId,
         upiName,
-        qrImage,
-        qrCodeUrl: qrImage,
       });
       setSaveMsg('Saved.');
       reload();
@@ -256,30 +250,6 @@ export function Settings() {
       setSaveMsg(err.message ?? 'Upload failed.');
     } finally {
       setShopImageBusy(false);
-    }
-  }
-
-  async function onQrFile(ev) {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file || !sellerId) return;
-    if (!isAcceptedImageType(file)) {
-      setSaveMsg('Use JPG, PNG, or WebP for the QR image.');
-      return;
-    }
-    setQrUploadBusy(true);
-    setSaveMsg('');
-    try {
-      const blob = await compressImageToJpegBlob(file);
-      const url = await uploadUpiQrJpeg(sellerId, blob);
-      setQrImage(url);
-      await updateSellerDocument(sellerId, { qrImage: url });
-      setSaveMsg('QR image uploaded.');
-      reload();
-    } catch (err) {
-      setSaveMsg(err.message ?? 'Upload failed.');
-    } finally {
-      setQrUploadBusy(false);
     }
   }
 
@@ -639,20 +609,6 @@ export function Settings() {
               onChange={(e) => setUpiName(e.target.value)}
               placeholder="Shown in UPI apps"
             />
-          </div>
-          <div className="add-item-field">
-            <label className="label" htmlFor="set-qr-file">
-              Upload UPI QR (JPEG to Storage)
-            </label>
-            <input
-              id="set-qr-file"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="input"
-              disabled={qrUploadBusy || demo}
-              onChange={onQrFile}
-            />
-            {qrUploadBusy ? <p className="muted" style={{ margin: 0 }}>Uploading…</p> : null}
           </div>
           {demo ? (
             <p className="muted" style={{ margin: 0 }}>

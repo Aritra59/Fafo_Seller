@@ -879,7 +879,7 @@ export function Orders() {
         </ul>
       )}
 
-      <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+      <p className="muted orders-page-back" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
 

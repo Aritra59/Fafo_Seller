@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { Eye, Pause, Pencil, Play, Trash2, X } from 'lucide-react';
 import {
   createMenuGroup,
   deleteMenuGroup,
@@ -6,9 +7,7 @@ import {
   subscribeMenuGroupsBySellerId,
   updateMenuGroupMeta,
 } from '../../services/menuGroupsService';
-import { SCHEDULE_PRESETS, formatMenuCardSchedule, menuIsActiveFlag } from '../../utils/menuSchedule';
-import { normalizeShopCode } from '../../utils/shopCode';
-import { publicShopByCodeUrl } from '../../utils/publicShopUrl';
+import { SCHEDULE_PRESETS, formatMenuCardScheduleLines, menuIsActiveFlag } from '../../utils/menuSchedule';
 import { SellerMenuPreview } from './SellerMenuPreview';
 import { CompactTimeInput } from '../CompactTimeInput';
 
@@ -90,7 +89,6 @@ function emptyEditForm() {
  * @param {string} props.sellerId
  * @param {object[]} [props.products]
  * @param {object[]} [props.combos]
- * @param {string} [props.shopCode]
  * @param {boolean} [props.readOnly]
  * @param {string} [props.menuSessionOverrideGroupId] Dashboard manual session menu id
  * @param {Set<string> | null} [props.allowedMenuGroupIds] When set, only these menu ids are listed
@@ -100,7 +98,6 @@ export const MenusPanel = forwardRef(function MenusPanel(
     sellerId,
     products = [],
     combos = [],
-    shopCode = '',
     readOnly = false,
     menuSessionOverrideGroupId = '',
     allowedMenuGroupIds = null,
@@ -155,8 +152,6 @@ export const MenusPanel = forwardRef(function MenusPanel(
     [combos],
   );
 
-  const codeNorm = useMemo(() => normalizeShopCode(shopCode), [shopCode]);
-
   const visibleMenus = useMemo(() => {
     if (allowedMenuGroupIds == null) return menus;
     if (allowedMenuGroupIds.size === 0) return [];
@@ -174,17 +169,6 @@ export const MenusPanel = forwardRef(function MenusPanel(
       },
     }),
     [readOnly],
-  );
-
-  const openBuyerMenuView = useCallback(
-    (menuGroupId) => {
-      const base = publicShopByCodeUrl(codeNorm);
-      if (!base) return;
-      const sep = base.includes('?') ? '&' : '?';
-      const url = `${base}${sep}menuGroupId=${encodeURIComponent(String(menuGroupId))}`;
-      window.open(url, '_blank', 'noopener,noreferrer');
-    },
-    [codeNorm],
   );
 
   function openEdit(g) {
@@ -546,7 +530,7 @@ export const MenusPanel = forwardRef(function MenusPanel(
         <h2 className="menus-panel__list-title">Your menus</h2>
         {menus.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>
-            No menus yet. Use <strong className="menus-panel__inline-strong">+ Create menu</strong> next to the Menus tab.
+            No menus yet. Use the <strong className="menus-panel__inline-strong">+</strong> button.
           </p>
         ) : visibleMenus.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>
@@ -559,73 +543,160 @@ export const MenusPanel = forwardRef(function MenusPanel(
               const nCombos = countCombos(g);
               const active = menuIsActiveFlag(g);
               const expanded = editingId === g.id;
-              const scheduleLine = formatMenuCardSchedule(g);
+              const { dayLine, timeLine } = formatMenuCardScheduleLines(g);
               return (
                 <li key={g.id}>
-                  <article className={`menus-panel__card card${active ? '' : ' menus-panel__card--inactive'}`}>
-                    <div className="menus-panel__card-head">
-                      <div>
-                        <h3 className="menus-panel__card-name">{g.name || g.menuName}</h3>
-                        <p className="menus-panel__card-sub muted">{scheduleLine}</p>
-                        <p className="menus-panel__card-counts muted">
-                          {nItems} item{nItems === 1 ? '' : 's'} · {nCombos} combo{nCombos === 1 ? '' : 's'}
-                        </p>
-                        <p className="menus-panel__card-status">
-                          <span className={active ? 'menus-panel__pill menus-panel__pill--on' : 'menus-panel__pill'}>
-                            {active ? 'Active' : 'Inactive'}
-                          </span>
-                        </p>
-                      </div>
-                      {!readOnly ? (
-                        <div className="menus-panel__card-actions">
-                          {expanded ? (
-                            <>
-                              <button type="button" className="btn btn-ghost btn--sm" disabled={saving} onClick={() => setEditingId(null)}>
-                                Cancel
-                              </button>
-                              <button type="button" className="btn btn-primary btn--sm" disabled={saving} onClick={() => void handleSaveEdit()}>
-                                {saving ? '…' : 'Save'}
-                              </button>
-                            </>
-                          ) : (
-                            <>
+                  <article
+                    className={`menus-panel__card menus-panel__card--dash${active ? '' : ' menus-panel__card--inactive'}${
+                      expanded ? ' menus-panel__card--expanded' : ''
+                    }`}
+                  >
+                    {expanded ? (
+                      <>
+                        <div className="menus-panel__card-head menus-panel__card-head--editing">
+                          <h3 className="menus-panel__card-name menus-panel__card-name--editing">
+                            {g.name || g.menuName}
+                          </h3>
+                          <div
+                            className="menus-panel__card-toolbar menus-panel__card-toolbar--editing"
+                            role="toolbar"
+                            aria-label="Save or cancel"
+                          >
+                            <button
+                              type="button"
+                              className="menus-panel__card-iconbtn menus-panel__card-iconbtn--header"
+                              disabled={saving}
+                              aria-label="Cancel editing"
+                              onClick={() => setEditingId(null)}
+                            >
+                              <X className="menus-panel__iconbtn-svg" size={19} strokeWidth={2.1} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-primary btn--sm menus-panel__toolbar-save"
+                              disabled={saving}
+                              onClick={() => void handleSaveEdit()}
+                            >
+                              {saving ? '…' : 'Save'}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="menus-panel__card-surface">
+                        <header className="menus-panel__card-top">
+                          <div className="menus-panel__card-top-left">
+                            <span
+                              className={
+                                active
+                                  ? 'menus-panel__status-dot menus-panel__status-dot--active'
+                                  : 'menus-panel__status-dot menus-panel__status-dot--inactive'
+                              }
+                              title={active ? 'Active' : 'Inactive'}
+                              role="img"
+                              aria-label={active ? 'Active' : 'Inactive'}
+                            />
+                            <h3 className="menus-panel__card-name">{g.name || g.menuName}</h3>
+                          </div>
+                          {!readOnly ? (
+                            <div className="menus-panel__card-top-actions" role="group" aria-label="Quick actions">
                               <button
                                 type="button"
-                                className="btn btn-ghost btn--sm"
-                                onClick={() => setPreviewGroup(g)}
+                                className="menus-panel__card-iconbtn menus-panel__card-iconbtn--header"
+                                disabled={saving}
                                 title="Preview as buyers see it"
+                                aria-label="Preview menu"
+                                onClick={() => setPreviewGroup(g)}
                               >
-                                Preview
+                                <Eye className="menus-panel__iconbtn-svg" size={18} strokeWidth={2.1} aria-hidden />
                               </button>
                               <button
                                 type="button"
-                                className="btn btn-ghost btn--sm"
-                                disabled={!codeNorm}
-                                onClick={() => openBuyerMenuView(g.id)}
-                                title="Open live shop for this menu"
+                                className="menus-panel__card-iconbtn menus-panel__card-iconbtn--header"
+                                disabled={saving}
+                                title="Edit menu"
+                                aria-label="Edit menu"
+                                onClick={() => openEdit(g)}
                               >
-                                View menu
+                                <Pencil className="menus-panel__iconbtn-svg" size={18} strokeWidth={2.1} aria-hidden />
                               </button>
-                              <button type="button" className="btn btn-ghost btn--sm" disabled={saving} onClick={() => openEdit(g)}>
-                                Edit
-                              </button>
-                              {active ? (
-                                <button type="button" className="btn btn-ghost btn--sm" disabled={saving} onClick={() => void setActive(g, false)}>
-                                  Deactivate
-                                </button>
-                              ) : (
-                                <button type="button" className="btn btn-ghost btn--sm" disabled={saving} onClick={() => void setActive(g, true)}>
-                                  Activate
-                                </button>
-                              )}
-                              <button type="button" className="btn btn-ghost btn--sm menus-panel__del" disabled={saving} onClick={() => void handleDelete(g)}>
-                                Delete
-                              </button>
-                            </>
+                            </div>
+                          ) : null}
+                        </header>
+
+                        <div className="menus-panel__card-schedule">
+                          <p className="menus-panel__card-schedule-line menus-panel__card-schedule-line--days muted">
+                            <span aria-hidden>⏰</span> {dayLine}
+                          </p>
+                          <p className="menus-panel__card-schedule-line menus-panel__card-schedule-line--time muted">
+                            {timeLine}
+                          </p>
+                        </div>
+
+                        <div className="menus-panel__card-badges" aria-label="Menu contents">
+                          <span className="menus-panel__stat-pill">
+                            <span aria-hidden>🍽</span> {nItems} {nItems === 1 ? 'Item' : 'Items'}
+                          </span>
+                          <span className="menus-panel__stat-pill">
+                            <span aria-hidden>🥤</span> {nCombos} {nCombos === 1 ? 'Combo' : 'Combos'}
+                          </span>
+                        </div>
+
+                        <div className="menus-panel__card-actions" role="toolbar" aria-label="Menu actions">
+                          <button
+                            type="button"
+                            className="menus-panel__action-col"
+                            disabled={saving}
+                            title="View — preview as buyers see it"
+                            onClick={() => setPreviewGroup(g)}
+                          >
+                            <span className="menus-panel__action-ico">
+                              <Eye size={20} strokeWidth={2.1} aria-hidden />
+                            </span>
+                            <span className="menus-panel__action-lbl">View</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="menus-panel__action-col"
+                            disabled={saving || readOnly}
+                            title="Edit menu"
+                            onClick={() => openEdit(g)}
+                          >
+                            <span className="menus-panel__action-ico">
+                              <Pencil size={20} strokeWidth={2.1} aria-hidden />
+                            </span>
+                            <span className="menus-panel__action-lbl">Edit</span>
+                          </button>
+                          {active ? (
+                            <button
+                              type="button"
+                              className="menus-panel__action-col menus-panel__action-col--danger"
+                              disabled={saving || readOnly}
+                              title="Deactivate menu"
+                              onClick={() => void setActive(g, false)}
+                            >
+                              <span className="menus-panel__action-ico">
+                                <Pause size={20} strokeWidth={2.1} aria-hidden />
+                              </span>
+                              <span className="menus-panel__action-lbl">Disable</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="menus-panel__action-col menus-panel__action-col--enable"
+                              disabled={saving || readOnly}
+                              title="Activate menu"
+                              onClick={() => void setActive(g, true)}
+                            >
+                              <span className="menus-panel__action-ico">
+                                <Play size={20} strokeWidth={2.1} aria-hidden />
+                              </span>
+                              <span className="menus-panel__action-lbl">Enable</span>
+                            </button>
                           )}
                         </div>
-                      ) : null}
-                    </div>
+                      </div>
+                    )}
 
                     {expanded ? (
                       <div className="menus-panel__editor stack">
@@ -718,6 +789,19 @@ export const MenusPanel = forwardRef(function MenusPanel(
                             </li>
                           ))}
                         </ul>
+                        {!readOnly ? (
+                          <div className="menus-panel__editor-danger">
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn--sm menus-panel__del menus-panel__editor-delete-btn"
+                              disabled={saving}
+                              onClick={() => void handleDelete(g)}
+                            >
+                              <Trash2 className="menus-panel__iconbtn-svg" size={16} strokeWidth={2.1} aria-hidden />
+                              Delete menu
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </article>

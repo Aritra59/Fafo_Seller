@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { clearDemoExplorer, DEMO_SELLER, isDemoExplorer } from '../constants/demoMode';
 import { readSellerCodeSessionLocal } from '../constants/shopCodeLocalSession';
 import { persistSellerId } from '../constants/session';
@@ -191,7 +191,9 @@ export function useSeller() {
     };
   }, [seller, shopCodeOnly]);
 
-  const reload = () => setVersion((v) => v + 1);
+  const reload = useCallback(() => {
+    setVersion((v) => v + 1);
+  }, []);
 
   const sellerId = seller?.id ?? null;
 

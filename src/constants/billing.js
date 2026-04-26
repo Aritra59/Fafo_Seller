@@ -1,8 +1,8 @@
 /** Platform UPI for FaFo subscription / balance payments (seller copies this in Billing). */
-export const FAFO_PLATFORM_UPI = 'arun79cg@oksbi';
+export const FAFO_PLATFORM_UPI = 'ar353@ptyes';
 
 /** WhatsApp support (digits only for wa.me). */
-export const FAFO_BILLING_SUPPORT_WA = '919911437353';
+export const FAFO_BILLING_SUPPORT_WA = '919625737715';
 
 export const FAFO_BILLING_WA_PREFILL =
   'Hello, I have paid FaFo billing. Please verify.';

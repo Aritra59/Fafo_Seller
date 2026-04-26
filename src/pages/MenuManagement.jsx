@@ -65,7 +65,6 @@ export function MenuManagement() {
         sellerId={sellerId}
         products={products}
         combos={combos}
-        shopCode={seller.shopCode ?? seller.code ?? ''}
         readOnly={isDemoExplorer()}
       />
     </div>

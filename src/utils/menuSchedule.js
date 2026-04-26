@@ -117,6 +117,50 @@ export function pickScheduledMenu(menus, now = new Date()) {
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
+ * @param {number | null} mins
+ * @returns {string} e.g. "07:00 AM"
+ */
+export function formatMinutesAs12hPadded(mins) {
+  if (mins == null || !Number.isFinite(mins)) return '—';
+  const h24 = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  const isAm = h24 < 12;
+  let hr = h24 % 12;
+  if (hr === 0) hr = 12;
+  const mm = m.toString().padStart(2, '0');
+  const hrStr = hr.toString().padStart(2, '0');
+  return `${hrStr}:${mm} ${isAm ? 'AM' : 'PM'}`;
+}
+
+/**
+ * Two-line schedule for menu cards: days label + time range (or "All day").
+ * @param {MenuLike} menu
+ * @returns {{ dayLine: string, timeLine: string }}
+ */
+export function formatMenuCardScheduleLines(menu) {
+  const preset = String(menu?.schedulePreset ?? '').toLowerCase() || 'all';
+  let dayLine = 'All days';
+  if (preset === 'weekdays') dayLine = 'Mon–Fri';
+  else if (preset === 'weekend') dayLine = 'Weekend';
+  else if (preset === 'custom' && Array.isArray(menu.rawDays) && menu.rawDays.length) {
+    dayLine = [...new Set(menu.rawDays)]
+      .filter((n) => n >= 0 && n <= 6)
+      .sort((a, b) => a - b)
+      .map((d) => DAY_LABELS[d])
+      .join(', ');
+  }
+  const sm = parseTimeToMinutes(menu?.startTime);
+  const em = parseTimeToMinutes(menu?.endTime);
+  if (sm == null || em == null) {
+    return { dayLine, timeLine: 'All day' };
+  }
+  return {
+    dayLine,
+    timeLine: `${formatMinutesAs12hPadded(sm)} – ${formatMinutesAs12hPadded(em)}`,
+  };
+}
+
+/**
  * @param {MenuLike} menu
  * @returns {string}
  */

@@ -43,7 +43,7 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
       </div>
 
       <p className="customer-premium-card__name">{name}</p>
-      <p className="customer-premium-card__phone muted" style={{ margin: '0.2rem 0 0', fontSize: '0.85rem' }}>
+      <p className="customer-premium-card__phone muted" style={{ margin: '0.15rem 0 0' }}>
         {phone}
       </p>
 

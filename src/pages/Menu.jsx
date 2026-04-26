@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -953,29 +953,6 @@ export function Menu() {
             </button>
           ))}
         </div>
-        <div className="menu-page-tabs-row__actions">
-          {tab === 'combos' && !demoReadOnly && !showComboForm ? (
-            <button
-              type="button"
-              className="menu-page-tab-action-btn"
-              onClick={() => {
-                setComboMsg('');
-                setSearchParams({ tab: 'combos', newCombo: '1' }, { replace: true });
-              }}
-            >
-              + Add combo
-            </button>
-          ) : null}
-          {tab === 'menus' && !demoReadOnly ? (
-            <button
-              type="button"
-              className="menu-page-tab-action-btn menu-page-tab-action-btn--primary"
-              onClick={() => menusPanelRef.current?.openCreateSheet?.()}
-            >
-              + Create menu
-            </button>
-          ) : null}
-        </div>
       </div>
 
       <div className="menu-page-filter-sticky card">
@@ -1137,7 +1114,7 @@ export function Menu() {
                                     className="menu-admin-product-card__qty muted"
                                     style={{ margin: 0, fontSize: '0.8125rem' }}
                                   >
-                                    Qty: {stockOk ? String(Math.max(0, Math.floor(qty))) : '—'}
+                                    Available items: {stockOk ? String(Math.max(0, Math.floor(qty))) : '—'}
                                   </p>
                                   <div className="menu-admin-product-card__actions">
                                     <Link to={`/menu/edit/${p.id}`} className="btn btn-ghost btn--sm">
@@ -1323,7 +1300,7 @@ export function Menu() {
               ) : combos.length === 0 ? (
                 <div className="card menu-page-empty">
                   <p className="muted" style={{ margin: 0 }}>
-                    No combos yet. Use <strong style={{ color: 'var(--text)' }}>+ Add combo</strong> next to the Combos tab.
+                    No combos yet. Use the <strong style={{ color: 'var(--text)' }}>+ Add combo</strong> button.
                   </p>
                 </div>
               ) : combosMatchingCategories.length === 0 ? (
@@ -1401,7 +1378,6 @@ export function Menu() {
               sellerId={seller.id}
               products={products}
               combos={combos}
-              shopCode={seller.shopCode ?? seller.code ?? ''}
               readOnly={demoReadOnly}
               menuSessionOverrideGroupId={String(seller.menuSessionOverrideGroupId ?? '').trim()}
               allowedMenuGroupIds={allowedMenuGroupIds}
@@ -1446,6 +1422,29 @@ export function Menu() {
         <Link to="/menu/add" className="menu-add-fab btn btn-primary" aria-label="Add item">
           + Add item
         </Link>
+      ) : null}
+      {tab === 'combos' && !demoReadOnly && !showComboForm ? (
+        <button
+          type="button"
+          className="menu-add-fab menu-add-fab--wide btn btn-primary"
+          onClick={() => {
+            setComboMsg('');
+            setSearchParams({ tab: 'combos', newCombo: '1' }, { replace: true });
+          }}
+          aria-label="Add combo"
+        >
+          + Add combo
+        </button>
+      ) : null}
+      {tab === 'menus' && !demoReadOnly ? (
+        <button
+          type="button"
+          className="menu-add-fab menu-add-fab--icon btn btn-primary"
+          onClick={() => menusPanelRef.current?.openCreateSheet?.()}
+          aria-label="Create menu"
+        >
+          <Plus size={24} strokeWidth={2.25} aria-hidden />
+        </button>
       ) : null}
 
       <p className="muted menu-page-back" style={{ margin: 0, fontSize: '0.8125rem' }}>
