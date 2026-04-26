@@ -139,7 +139,7 @@ button {
   top: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: clamp(0.25rem, 1.5vw, 0.45rem);
   box-sizing: border-box;
@@ -173,11 +173,11 @@ button {
 }
 
 .seller-topbar__center {
+  display: none;
   grid-column: 2;
   justify-self: center;
   min-width: 0;
   max-width: min(46vw, 13rem);
-  display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 0.2rem;
@@ -201,7 +201,7 @@ button {
 }
 
 .seller-topbar__right {
-  grid-column: 3;
+  grid-column: 2;
   justify-self: end;
   display: flex;
   align-items: center;
@@ -333,46 +333,15 @@ button {
   }
 }
 
-/* Mobile: page title on its own row so LIVE / trial badge and route title do not overlap */
+/* Mobile: single row — route title removed from header to save space (see .seller-topbar__center) */
 @media (max-width: 640px) {
   .seller-topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    row-gap: 0.35rem;
-    column-gap: 0.4rem;
-    padding-bottom: 0.6rem;
     max-width: 100%;
+    padding-bottom: 0.5rem;
   }
 
   .seller-topbar__left {
-    grid-column: 1;
-    grid-row: 1;
     min-width: 0;
-  }
-
-  .seller-topbar__right {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: start;
-  }
-
-  .seller-topbar__center {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    max-width: 100%;
-    min-width: 0;
-    justify-content: center;
-    padding: 0 0.15rem;
-  }
-
-  .seller-topbar__page-title {
-    font-size: 0.68rem;
-    line-height: 1.25;
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
   }
 
   .seller-topbar__name-row {
@@ -4706,7 +4675,7 @@ button {
   min-width: 7.5rem;
 }
 
-/* Compact cards, shrink-wrapped width; as many per row as fit (like inline tiles). */
+/* Desktop: compact shrink-wrapped tiles. Mobile: 3 equal columns, full width, no right gutter. */
 .customers-premium-grid {
   list-style: none;
   margin: 0;
@@ -4717,12 +4686,33 @@ button {
   align-items: flex-start;
   align-content: flex-start;
   justify-content: flex-start;
+  width: 100%;
 }
 
 .customers-premium-grid > li {
   flex: 0 0 auto;
   min-width: 0;
   max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .customers-premium-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem 0.45rem;
+    width: 100%;
+  }
+
+  .customers-premium-grid > li {
+    width: 100%;
+  }
+
+  .customer-premium-card {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
 }
 
 @media (max-width: 360px) {
@@ -5601,6 +5591,45 @@ button {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem;
   align-items: start;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .orders-page--pos {
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .orders-pos-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.7rem;
+  }
+
+  .orders-pos-tile {
+    padding: 0.7rem 0.85rem 0.75rem;
+  }
+
+  .orders-pos-tile__buyer {
+    font-size: 0.78rem;
+    -webkit-line-clamp: 3;
+  }
+
+  .orders-pos-tile__id {
+    font-size: 0.62rem;
+  }
+
+  .orders-pos-tile__total {
+    font-size: 0.95rem;
+  }
+
+  .orders-pos-tile__meta {
+    font-size: 0.78rem;
+  }
+
+  .orders-pos-tile__time {
+    font-size: 0.78rem;
+  }
 }
 
 .orders-pos-tile {
@@ -6444,9 +6473,25 @@ button {
   grid-template-rows: 1fr 1fr;
 }
 
-/* Bottom stats strip only on Menus tab — room for one-line fixed bar */
+/* Bottom stats strip only on Menus tab — room for one-line fixed bar + FAB clear of “View menu” */
 .menu-page--menus-stats-pad {
   padding-bottom: calc(3.5rem + var(--safe-bottom));
+}
+
+@media (max-width: 639.98px) {
+  .menu-page--menus-stats-pad {
+    padding-bottom: calc(5.75rem + var(--safe-bottom));
+  }
+
+  /* Raise Create-menu FAB so it does not cover the fixed stats bar / “View menu” */
+  .menu-page--menus-stats-pad .menu-add-fab--icon {
+    bottom: calc(3.9rem + env(safe-area-inset-bottom, 0px));
+    z-index: 28;
+  }
+
+  .menu-page-stats-bar--menus {
+    z-index: 32;
+  }
 }
 
 .menu-items-toolbar {
