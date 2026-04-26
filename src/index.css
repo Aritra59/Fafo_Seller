@@ -4951,42 +4951,91 @@ button {
   color: #ffffff;
 }
 
+/* Narrow 3-up grid on phones — scale down + allow wrap so amounts/dates are not clipped */
 @media (max-width: 640px) {
   .customer-premium-card {
-    padding: 0.75rem 0.7rem 0.72rem;
-    gap: 0.35rem;
+    padding: 0.45rem 0.4rem 0.48rem;
+    gap: 0.22rem;
+  }
+
+  .customer-premium-card__top {
+    gap: 0.3rem;
   }
 
   .customer-premium-card__avatar-wrap {
-    width: 36px;
-    height: 36px;
+    width: 26px;
+    height: 26px;
   }
 
   .customer-premium-card__avatar-letter {
-    font-size: 0.9rem;
+    font-size: 0.7rem;
   }
 
   .customer-premium-card__badge {
-    font-size: 0.5rem;
-    padding: 0.16rem 0.3rem;
-    max-width: 3.4rem;
+    font-size: 0.4375rem;
+    padding: 0.1rem 0.2rem;
+    max-width: 2.9rem;
+    letter-spacing: 0.04em;
   }
 
   .customer-premium-card__name {
-    font-size: 0.9375rem;
-    display: block;
-    -webkit-line-clamp: unset;
-    -webkit-box-orient: unset;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    margin-top: 0.08rem;
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  .customer-premium-card__stats {
+    gap: 0.2rem;
+    margin-top: 0.02rem;
+  }
+
+  .customer-premium-card__foot {
+    padding-top: 0.35rem;
   }
 
   .customer-premium-card__stat {
-    font-size: 0.75rem;
+    font-size: 0.62rem;
+    line-height: 1.2;
+    gap: 0.2rem;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .customer-premium-card__lucide {
+    width: 12px !important;
+    height: 12px !important;
+    min-width: 12px;
+    max-width: 12px;
+    max-height: 12px;
+    margin-top: 0.05rem;
+    flex-shrink: 0;
+  }
+
+  .customer-premium-card__stat-inner {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    min-width: 0;
+    flex: 1 1 min(0, 100%);
   }
 
   .customer-premium-card__stat--since {
-    font-size: 0.75rem;
+    font-size: 0.62rem;
+  }
+
+  .customer-premium-card__amt,
+  .customer-premium-card__date,
+  .customer-premium-card__num {
+    font-size: 0.62rem;
   }
 }
 
