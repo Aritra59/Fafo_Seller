@@ -232,9 +232,7 @@ const OrderPosTile = memo(function OrderPosTile({ order, onSelect }) {
           {items} item{items === 1 ? '' : 's'}
         </span>
       </div>
-      <p className="orders-pos-tile__pay muted" style={{ margin: 0, fontSize: '0.75rem' }}>
-        {orderPaymentLabel(order)}
-      </p>
+      <p className="orders-pos-tile__pay muted">{orderPaymentLabel(order)}</p>
       <div className="orders-pos-tile__time muted">
         {date ? (
           <>

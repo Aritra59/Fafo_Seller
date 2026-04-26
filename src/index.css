@@ -4675,7 +4675,7 @@ button {
   min-width: 7.5rem;
 }
 
-/* Desktop: compact shrink-wrapped tiles. Mobile: 3 equal columns, full width, no right gutter. */
+/* Desktop: compact shrink-wrapped tiles. Mobile: 2 columns + fluid text inside each card. */
 .customers-premium-grid {
   list-style: none;
   margin: 0;
@@ -4700,8 +4700,8 @@ button {
 @media (max-width: 640px) {
   .customers-premium-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.4rem 0.45rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.55rem;
     width: 100%;
   }
 
@@ -4735,6 +4735,8 @@ button {
 
 /* Customer cards — reference: dark #121212, teal border, icon rows + “Since” footer (no phone) */
 .customer-premium-card {
+  container-type: inline-size;
+  container-name: customer-premium;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -4785,8 +4787,8 @@ button {
 }
 
 .customer-premium-card__avatar-wrap {
-  width: 40px;
-  height: 40px;
+  width: clamp(24px, 0.2rem + 5.5cqi, 40px);
+  height: clamp(24px, 0.2rem + 5.5cqi, 40px);
   border-radius: 999px;
   overflow: hidden;
   flex-shrink: 0;
@@ -4803,13 +4805,13 @@ button {
 }
 
 .customer-premium-card__avatar-letter {
-  font-size: 1rem;
+  font-size: clamp(0.58rem, 0.12rem + 0.9cqi, 1rem);
   font-weight: 800;
   color: #ffffff;
 }
 
 .customer-premium-card__badge {
-  font-size: 0.5625rem;
+  font-size: clamp(0.4rem, 0.1rem + 0.5cqi, 0.5625rem);
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -4851,7 +4853,7 @@ button {
 
 .customer-premium-card__name {
   margin: 0.15rem 0 0;
-  font-size: 1rem;
+  font-size: clamp(0.68rem, 0.18rem + 0.65cqi, 1rem);
   font-weight: 700;
   line-height: 1.25;
   color: #ffffff;
@@ -4875,20 +4877,29 @@ button {
 .customer-premium-card__stat {
   display: flex;
   flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: min(0.3rem, 0.1rem + 0.15cqi);
   min-width: 0;
   margin: 0;
-  font-size: 0.8125rem;
-  line-height: 1.3;
+  /* Type + icons follow card width (cqi) so long totals & dates stay on one line. */
+  font-size: clamp(0.45rem, 0.12rem + 5.4cqi, 0.8125rem);
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 
 .customer-premium-card__lucide {
   flex-shrink: 0;
   display: block;
+  width: clamp(9px, 0.1rem + 3.2cqi, 16px) !important;
+  height: clamp(9px, 0.1rem + 3.2cqi, 16px) !important;
+  min-width: 0;
+  max-width: 16px;
+  max-height: 16px;
+  margin-top: 0.02em;
+  vertical-align: middle;
 }
 
 .customer-premium-card__lucide--package {
@@ -4905,8 +4916,10 @@ button {
 
 .customer-premium-card__stat-inner {
   min-width: 0;
+  flex: 1 1 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  white-space: nowrap;
   color: #9ca3af;
 }
 
@@ -4939,7 +4952,7 @@ button {
 }
 
 .customer-premium-card__stat--since {
-  font-size: 0.8rem;
+  font-size: 1em;
 }
 
 .customer-premium-card__stat--since .customer-premium-card__stat-inner {
@@ -4951,91 +4964,29 @@ button {
   color: #ffffff;
 }
 
-/* Narrow 3-up grid on phones — scale down + allow wrap so amounts/dates are not clipped */
+/* Phones — 2-up grid: tighter insets; metrics stay one line via cqi in base rules. */
 @media (max-width: 640px) {
   .customer-premium-card {
-    padding: 0.45rem 0.4rem 0.48rem;
-    gap: 0.22rem;
+    padding: 0.48rem 0.48rem 0.52rem;
+    gap: 0.26rem;
   }
 
   .customer-premium-card__top {
     gap: 0.3rem;
   }
 
-  .customer-premium-card__avatar-wrap {
-    width: 26px;
-    height: 26px;
-  }
-
-  .customer-premium-card__avatar-letter {
-    font-size: 0.7rem;
-  }
-
-  .customer-premium-card__badge {
-    font-size: 0.4375rem;
-    padding: 0.1rem 0.2rem;
-    max-width: 2.9rem;
-    letter-spacing: 0.04em;
-  }
-
-  .customer-premium-card__name {
-    margin-top: 0.08rem;
-    font-size: 0.6875rem;
-    line-height: 1.2;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    white-space: normal;
-    overflow: hidden;
-    word-break: break-word;
-  }
-
   .customer-premium-card__stats {
     gap: 0.2rem;
-    margin-top: 0.02rem;
+    margin-top: 0.04rem;
   }
 
   .customer-premium-card__foot {
-    padding-top: 0.35rem;
+    padding-top: 0.38rem;
   }
 
-  .customer-premium-card__stat {
-    font-size: 0.62rem;
-    line-height: 1.2;
-    gap: 0.2rem;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .customer-premium-card__lucide {
-    width: 12px !important;
-    height: 12px !important;
-    min-width: 12px;
-    max-width: 12px;
-    max-height: 12px;
-    margin-top: 0.05rem;
-    flex-shrink: 0;
-  }
-
-  .customer-premium-card__stat-inner {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    min-width: 0;
-    flex: 1 1 min(0, 100%);
-  }
-
-  .customer-premium-card__stat--since {
-    font-size: 0.62rem;
-  }
-
-  .customer-premium-card__amt,
-  .customer-premium-card__date,
-  .customer-premium-card__num {
-    font-size: 0.62rem;
+  .customer-premium-card__name {
+    margin-top: 0.06rem;
+    -webkit-line-clamp: 2;
   }
 }
 
@@ -5698,7 +5649,7 @@ button {
   }
 }
 
-/* Orders POS: responsive auto-grid — 1 / 2 / 3+ columns from viewport; full width, no ragged right gap */
+/* Orders POS: 2 columns on small screens; auto-fit on wider so tiles do not stay full width. */
 .orders-pos-grid {
   list-style: none;
   margin: 0;
@@ -5712,6 +5663,13 @@ button {
   transition: gap 0.2s ease;
 }
 
+@media (max-width: 640px) {
+  .orders-pos-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem 0.5rem;
+  }
+}
+
 .orders-pos-grid > li {
   min-width: 0;
   display: flex;
@@ -5719,6 +5677,8 @@ button {
 }
 
 .orders-pos-tile {
+  container-type: inline-size;
+  container-name: order-pos;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -5786,8 +5746,8 @@ button {
 .orders-pos-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.22rem 0.5rem;
-  font-size: 0.625rem;
+  padding: 0.18rem 0.42rem;
+  font-size: clamp(0.48rem, 0.1rem + 1.4cqi, 0.625rem);
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -5833,10 +5793,11 @@ button {
 
 .orders-pos-tile__id {
   margin: 0;
-  font-size: 0.58rem;
+  font-size: clamp(0.45rem, 0.1rem + 0.7cqi, 0.58rem);
   font-family: ui-monospace, monospace;
   color: var(--text-muted);
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5844,14 +5805,14 @@ button {
 
 .orders-pos-tile__buyer {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: clamp(0.5rem, 0.1rem + 1.1cqi, 0.7rem);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.2;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orders-pos-tile__name {
@@ -5869,27 +5830,61 @@ button {
 
 .orders-pos-tile__row {
   display: flex;
+  flex-wrap: nowrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .orders-pos-tile__total {
-  font-size: 0.88rem;
+  font-size: clamp(0.6rem, 0.2rem + 1.1cqi, 0.88rem);
   font-weight: 800;
   color: #6ee7b7;
+  line-height: 1.15;
+  min-width: 0;
+  flex-shrink: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .orders-pos-tile__meta {
-  font-size: 0.72rem;
+  font-size: clamp(0.48rem, 0.1rem + 0.7cqi, 0.72rem);
   color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .orders-pos-tile__time {
-  font-size: 0.72rem;
+  /* override .muted fixed font size so date + time scale to one line in narrow tiles */
+  font-size: clamp(0.5rem, 0.15rem + 1.5cqi, 0.72rem) !important;
   display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0.15em 0.35em;
+  min-width: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.orders-pos-tile__time > span {
+  min-width: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.orders-pos-tile__pay {
+  margin: 0;
+  line-height: 1.2;
+  /* beats .muted fixed 0.875rem so payment line scales with tile width */
+  font-size: clamp(0.45rem, 0.1rem + 0.7cqi, 0.75rem) !important;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orders-pos-tile__time-sep::before {
@@ -5900,7 +5895,7 @@ button {
 
 .orders-pos-tile__hint {
   margin: 0.15rem 0 0;
-  font-size: 0.62rem;
+  font-size: clamp(0.5rem, 0.1rem + 0.5cqi, 0.62rem) !important;
   line-height: 1.3;
   flex-shrink: 0;
 }
