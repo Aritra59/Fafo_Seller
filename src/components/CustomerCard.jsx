@@ -23,7 +23,7 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
 
   return (
     <Link to={`/customers/${encodeURIComponent(routeId)}`} className="customer-premium-card">
-      <div className="customer-premium-card__top">
+      <div className="customer-premium-card__head">
         <div className="customer-premium-card__avatar-wrap">
           {photoUrl ? (
             <img
@@ -38,12 +38,13 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
             </span>
           )}
         </div>
-        <span className={badgeClass(badge)}>{badge}</span>
+        <div className="customer-premium-card__head-text">
+          <p className="customer-premium-card__name" title={name || undefined}>
+            {name}
+          </p>
+          <span className={badgeClass(badge)}>{badge}</span>
+        </div>
       </div>
-
-      <p className="customer-premium-card__name" title={name || undefined}>
-        {name}
-      </p>
 
       <div className="customer-premium-card__stats" aria-label="Order totals">
         <p className="customer-premium-card__stat customer-premium-card__stat--orders">
@@ -70,10 +71,10 @@ export const CustomerCard = memo(function CustomerCard({ profile }) {
             <span className="customer-premium-card__amt">{formatRupee(totalSpent)}</span>
           </span>
         </p>
-      </div>
-
-      <div className="customer-premium-card__foot">
-        <p className="customer-premium-card__stat customer-premium-card__stat--since" title={since && since !== '—' ? `Since ${since}` : undefined}>
+        <p
+          className="customer-premium-card__stat customer-premium-card__stat--since"
+          title={since && since !== '—' ? `Since ${since}` : undefined}
+        >
           <CalendarDays
             className="customer-premium-card__lucide customer-premium-card__lucide--since"
             size={15}
