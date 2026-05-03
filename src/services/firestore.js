@@ -12,6 +12,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  startAfter,
   Timestamp,
   updateDoc,
   where,
@@ -20,7 +21,11 @@ import {
 import {
   DEMO_COMBOS,
   DEMO_GLOBAL_CUISINE_CATEGORIES,
+  DEMO_GLOBAL_ITEM_CATEGORIES,
+  DEMO_GLOBAL_ITEM_TYPES,
   DEMO_GLOBAL_MENU_CATEGORIES,
+  DEMO_GLOBAL_TAGS,
+  DEMO_MASTER_PRODUCTS,
   DEMO_ORDERS,
   DEMO_PRODUCTS,
   DEMO_SELLER,
@@ -926,6 +931,10 @@ export async function updateSellerDocument(sellerId, fields) {
   if (fields.fafoSubscriptionActive !== undefined) {
     payload.fafoSubscriptionActive = Boolean(fields.fafoSubscriptionActive);
   }
+  if (fields.acceptedTermsVersion !== undefined) {
+    const n = Number(fields.acceptedTermsVersion);
+    payload.acceptedTermsVersion = Number.isFinite(n) ? n : null;
+  }
 
   await updateDoc(ref, payload);
 }
@@ -1442,6 +1451,18 @@ export function getProductMenuCategoryLabel(product) {
   return UNCATEGORIZED_MENU;
 }
 
+/** Item sub-category heading: prefer stored name, never a bare Firestore id. */
+export function getProductItemCategoryLabel(product) {
+  const n = product?.itemCategoryName;
+  if (typeof n === 'string' && n.trim()) {
+    return n.trim();
+  }
+  const parsed = parseStoredProductCategories(typeof product?.category === 'string' ? product.category : '');
+  const leg = String(parsed.itemCategory ?? '').trim();
+  if (leg) return leg;
+  return '';
+}
+
 function normalizeProductFieldsInput(fields) {
   const name = String(fields.name ?? '').trim();
   const priceRaw = fields.price;
@@ -1470,10 +1491,22 @@ function normalizeProductFieldsInput(fields) {
     menuCategoryName = v == null || String(v).trim() === '' ? null : String(v).trim();
   }
 
+  let itemCategoryId;
+  if (Object.prototype.hasOwnProperty.call(fields, 'itemCategoryId')) {
+    const v = fields.itemCategoryId;
+    itemCategoryId = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+
+  let itemCategoryName;
+  if (Object.prototype.hasOwnProperty.call(fields, 'itemCategoryName')) {
+    const v = fields.itemCategoryName;
+    itemCategoryName = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+
   const menuCat =
     menuCategoryName ||
     String(fields.menuCategory ?? '').trim();
-  const itemCat = String(fields.itemCategory ?? fields.category ?? '').trim();
+  const itemCat = String(itemCategoryName ?? fields.itemCategory ?? '').trim();
   const categoryParts = [menuCat, itemCat].filter(Boolean);
   const category = categoryParts.length ? categoryParts.join(CATEGORY_JOINER) : null;
   const cuisineCategory =
@@ -1486,6 +1519,23 @@ function normalizeProductFieldsInput(fields) {
   const tagList = Array.isArray(fields.tags)
     ? fields.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
+
+  let itemType = null;
+  if (Object.prototype.hasOwnProperty.call(fields, 'itemType')) {
+    const v = fields.itemType;
+    itemType = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+
+  let masterProductId = null;
+  if (Object.prototype.hasOwnProperty.call(fields, 'masterProductId')) {
+    const v = fields.masterProductId;
+    masterProductId = v == null || String(v).trim() === '' ? null : String(v).trim();
+  }
+
+  let customized;
+  if (Object.prototype.hasOwnProperty.call(fields, 'customized')) {
+    customized = Boolean(fields.customized);
+  }
 
   let discountLabel;
   if (Object.prototype.hasOwnProperty.call(fields, 'discountLabel')) {
@@ -1551,7 +1601,12 @@ function normalizeProductFieldsInput(fields) {
     ...(imageUrl !== undefined ? { imageUrl } : {}),
     ...(menuGroupId !== undefined ? { menuGroupId } : {}),
     ...(menuGroupIds !== undefined ? { menuGroupIds } : {}),
+    itemType,
+    masterProductId,
   };
+  if (customized !== undefined) {
+    out.customized = customized;
+  }
   if (Object.prototype.hasOwnProperty.call(fields, 'cuisineCategoryId')) {
     out.cuisineCategoryId = cuisineCategoryId;
   }
@@ -1563,6 +1618,12 @@ function normalizeProductFieldsInput(fields) {
   }
   if (Object.prototype.hasOwnProperty.call(fields, 'menuCategoryName')) {
     out.menuCategoryName = menuCategoryName;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'itemCategoryId')) {
+    out.itemCategoryId = itemCategoryId;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'itemCategoryName')) {
+    out.itemCategoryName = itemCategoryName;
   }
   return out;
 }
@@ -1946,6 +2007,444 @@ export function subscribeGlobalMenuCategories(onData, onError) {
  * (Firestore doc id) or `cuisineDisplayName` (case-insensitive), e.g. legacy `parentCuisine` strings.
  * If none are linked, returns all active menu categories (still sorted).
  */
+const GLOBAL_TAGS_COL = 'globalTags';
+const GLOBAL_ITEM_TYPES_COL = 'globalItemTypes';
+const ITEM_CATEGORIES_COL = 'itemCategories';
+const MASTER_PRODUCTS_COL = 'masterProducts';
+const TERMS_DOC_PATH = /** @type {const} */ (['terms', 'seller']);
+
+/**
+ * Canonical string for comparing product names against `masterProducts.normalizedName`.
+ */
+export function normalizeProductNameForMatch(name) {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Readable terms body from Firestore doc (`terms/seller`).
+ * Prefer `content`, then legacy `body` / `text`.
+ */
+export function resolveSellerTermsDisplayContent(termsDoc) {
+  if (!termsDoc || typeof termsDoc !== 'object') return '';
+  const c = termsDoc.content;
+  if (typeof c === 'string' && c.trim()) return c.trim();
+  const b = termsDoc.body;
+  if (typeof b === 'string' && b.trim()) return b.trim();
+  const t = termsDoc.text;
+  if (typeof t === 'string' && t.trim()) return t.trim();
+  return '';
+}
+
+/**
+ * Seller-facing terms (`terms/seller`).
+ * Expects fields like `version`, `content` (primary), optionally `title`, `body` / `text`.
+ */
+export async function getSellerTermsDocument() {
+  if (isDemoExplorer()) {
+    return null;
+  }
+  const ref = doc(db, TERMS_DOC_PATH[0], TERMS_DOC_PATH[1]);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    return null;
+  }
+  return { id: snap.id, ...snap.data() };
+}
+
+function mapGlobalTagSnapshot(snap) {
+  const rows = snap.docs
+    .map((d) => {
+      const data = d.data();
+      const active = isGlobalCategoryActive(data);
+      const name = String(data?.slug ?? data?.name ?? data?.tag ?? '').trim();
+      const sortOrder = Number(data.sortOrder);
+      return {
+        id: d.id,
+        name,
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 999,
+        active,
+      };
+    })
+    .filter((r) => r.name);
+  rows.sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  );
+  return rows;
+}
+
+function mapGlobalItemTypeSnapshot(snap) {
+  return mapGlobalTagSnapshot(snap);
+}
+
+/**
+ * Admin-managed catalog tags (`globalTags`). Sellers select chips read-only from this list.
+ */
+export function subscribeGlobalTags(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([...DEMO_GLOBAL_TAGS.map((x) => ({ ...x }))]);
+    return () => {};
+  }
+  const ref = collection(db, GLOBAL_TAGS_COL);
+  const q = query(ref, limit(400));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(mapGlobalTagSnapshot(snap));
+    },
+    (err) => {
+      onError?.(err);
+      onData([]);
+    },
+  );
+}
+
+/**
+ * Admin-managed item types for grouping (`globalItemTypes`).
+ */
+export function subscribeGlobalItemTypes(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([...DEMO_GLOBAL_ITEM_TYPES.map((x) => ({ ...x }))]);
+    return () => {};
+  }
+  const ref = collection(db, GLOBAL_ITEM_TYPES_COL);
+  const q = query(ref, limit(120));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(mapGlobalItemTypeSnapshot(snap));
+    },
+    (err) => {
+      onError?.(err);
+      onData([]);
+    },
+  );
+}
+
+/**
+ * Admin-managed item categories (`itemCategories`).
+ * Optional `parentMenuCategoryId` links a row to `globalMenuCategories` id when using linked lists.
+ */
+export function subscribeGlobalItemCategories(onData, onError) {
+  if (isDemoExplorer()) {
+    onData([...DEMO_GLOBAL_ITEM_CATEGORIES.map((x) => ({ ...x }))]);
+    return () => {};
+  }
+  const ref = collection(db, ITEM_CATEGORIES_COL);
+  const q = query(ref, limit(400));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data();
+        const active = isGlobalCategoryActive(data);
+        const name = String(data?.name ?? data?.label ?? '').trim();
+        const sortOrder = Number(data.sortOrder);
+        const parentMenuCategoryId =
+          typeof data.parentMenuCategoryId === 'string' ? data.parentMenuCategoryId.trim() || null : null;
+        const itemType =
+          typeof data.itemType === 'string' && data.itemType.trim() ? data.itemType.trim() : null;
+        return {
+          id: d.id,
+          name,
+          sortOrder: Number.isFinite(sortOrder) ? sortOrder : 999,
+          active,
+          parentMenuCategoryId,
+          itemType,
+        };
+      }).filter((r) => r.name);
+      rows.sort(
+        (a, b) =>
+          a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      );
+      onData(rows);
+    },
+    (err) => {
+      onError?.(err);
+      onData([]);
+    },
+  );
+}
+
+/**
+ * Paginated fetch of master catalog (`masterProducts`).
+ * `lastDocOrOffset` — Firestore `DocumentSnapshot`, or numeric offset when in demo explorer.
+ */
+export async function fetchMasterProductsPage(pageSize = 24, lastDocOrOffset = null) {
+  const n = Number(pageSize);
+  const sz = Number.isFinite(n) && n > 0 ? Math.min(n, 60) : 24;
+  if (isDemoExplorer()) {
+    const all = [...DEMO_MASTER_PRODUCTS].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+    );
+    const start =
+      lastDocOrOffset != null &&
+      typeof lastDocOrOffset === 'number' &&
+      Number.isFinite(lastDocOrOffset)
+        ? Math.max(0, Math.floor(lastDocOrOffset))
+        : 0;
+    const rows = all.slice(start, start + sz);
+    const hasMore = start + rows.length < all.length;
+    const nextCursor = hasMore ? start + rows.length : null;
+    return { rows, hasMore, nextCursor: nextCursor ?? null };
+  }
+
+  const col = collection(db, MASTER_PRODUCTS_COL);
+  let q;
+  if (lastDocOrOffset != null && typeof lastDocOrOffset !== 'number') {
+    q = query(col, orderBy('name'), startAfter(lastDocOrOffset), limit(sz));
+  } else {
+    q = query(col, orderBy('name'), limit(sz));
+  }
+  const snapshot = await getDocs(q);
+  const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const last =
+    snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1] : null;
+  return {
+    rows,
+    hasMore: snapshot.docs.length === sz,
+    nextCursor: last,
+  };
+}
+
+function categoriesFlatFromMaster(masterRow) {
+  const raw = masterRow?.categories;
+  let cuisineCategoryId;
+  let cuisineCategoryName;
+  let menuCategoryId;
+  let menuCategoryName;
+  let itemCategoryId;
+  let itemCategoryName;
+
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    cuisineCategoryId = String(raw.cuisineCategoryId ?? raw.cuisineId ?? '').trim() || undefined;
+    cuisineCategoryName =
+      typeof raw.cuisineCategoryName === 'string' ? raw.cuisineCategoryName.trim() || null : null;
+    menuCategoryId = String(raw.menuCategoryId ?? '').trim() || undefined;
+    menuCategoryName =
+      typeof raw.menuCategoryName === 'string' ? raw.menuCategoryName.trim() || null : null;
+    itemCategoryId = String(raw.itemCategoryId ?? '').trim() || undefined;
+    itemCategoryName =
+      typeof raw.itemCategoryName === 'string' ? raw.itemCategoryName.trim() || null : null;
+  }
+
+  cuisineCategoryId =
+    (cuisineCategoryId ?? String(masterRow?.cuisineCategoryId ?? '').trim()) || undefined;
+  cuisineCategoryName =
+    cuisineCategoryName ??
+    (typeof masterRow?.cuisineCategoryName === 'string'
+      ? masterRow.cuisineCategoryName.trim()
+      : null);
+  menuCategoryId = (menuCategoryId ?? String(masterRow?.menuCategoryId ?? '').trim()) || undefined;
+  menuCategoryName =
+    menuCategoryName ??
+    (typeof masterRow?.menuCategoryName === 'string' ? masterRow.menuCategoryName.trim() : null);
+
+  const cuisineCategory =
+    cuisineCategoryName ||
+    (typeof masterRow?.cuisineCategory === 'string' ? masterRow.cuisineCategory.trim() : null) ||
+    null;
+  const menuCat =
+    menuCategoryName ||
+    (typeof masterRow?.menuCategory === 'string' ? masterRow.menuCategory.trim() : null) ||
+    null;
+
+  itemCategoryId = (itemCategoryId ?? String(masterRow?.itemCategoryId ?? '').trim()) || undefined;
+  itemCategoryName =
+    itemCategoryName ??
+    (typeof masterRow?.itemCategoryName === 'string' ? masterRow.itemCategoryName.trim() : null);
+  const itemCat =
+    itemCategoryName ||
+    (typeof masterRow?.itemCategory === 'string' ? masterRow.itemCategory.trim() : null) ||
+    null;
+
+  return {
+    cuisineCategoryId: cuisineCategoryId ?? null,
+    cuisineCategoryName: cuisineCategoryName ?? cuisineCategory,
+    menuCategoryId: menuCategoryId ?? null,
+    menuCategoryName: menuCategoryName ?? menuCat,
+    cuisineCategory,
+    menuCategory: menuCat,
+    itemCategoryId: itemCategoryId ?? null,
+    itemCategoryName: itemCategoryName ?? itemCat,
+    itemCategory: itemCat,
+  };
+}
+
+/**
+ * Create a seller `products` row by copying a `masterProducts` document.
+ */
+export async function createSellerProductFromMaster(sellerId, masterRow) {
+  const sid = String(sellerId ?? '').trim();
+  if (!sid) {
+    throw new Error('Missing seller.');
+  }
+  if (isDemoSellerId(sid)) {
+    throw new Error('Demo mode is read-only. Sign in to add items.');
+  }
+  const mid = String(masterRow?.id ?? '').trim();
+  if (!mid) {
+    throw new Error('Missing master product.');
+  }
+
+  const name = String(masterRow?.name ?? '').trim();
+  if (!name) {
+    throw new Error('Master item has no name.');
+  }
+
+  const cat = categoriesFlatFromMaster(masterRow);
+  const cuisineIdOpt = String(cat.cuisineCategoryId ?? '').trim() || null;
+  const menuIdOpt = String(cat.menuCategoryId ?? '').trim() || null;
+  const itemCatIdOpt = String(cat.itemCategoryId ?? '').trim() || null;
+
+  const cNameFull = String(
+    cat.cuisineCategoryName ?? cat.cuisineCategory ?? masterRow.cuisineCategoryName ?? '',
+  ).trim();
+  const mNameFull = String(
+    cat.menuCategoryName ?? cat.menuCategory ?? masterRow.menuCategoryName ?? '',
+  ).trim();
+  const iNameFull = String(
+    cat.itemCategoryName ?? cat.itemCategory ?? masterRow.itemCategoryName ?? '',
+  ).trim();
+
+  if (!name || !mid || !cNameFull || !mNameFull || !iNameFull) {
+    throw new Error('Master product missing required fields');
+  }
+
+  const tagList = Array.isArray(masterRow.tags)
+    ? masterRow.tags.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+  const itemTypeRaw = masterRow.itemType;
+  const itemType =
+    itemTypeRaw == null || String(itemTypeRaw).trim() === ''
+      ? null
+      : String(itemTypeRaw).trim();
+
+  const priceNum = Number(masterRow.price);
+  const price = Number.isFinite(priceNum) && priceNum >= 0 ? priceNum : 0;
+
+  const desc =
+    typeof masterRow.description === 'string' && masterRow.description.trim()
+      ? masterRow.description.trim()
+      : null;
+
+  let prepTimeMerged = '';
+  if (typeof masterRow.preparationTime === 'string' && masterRow.preparationTime.trim()) {
+    prepTimeMerged = masterRow.preparationTime.trim();
+  } else if (typeof masterRow.prepTime === 'string' && masterRow.prepTime.trim()) {
+    prepTimeMerged = masterRow.prepTime.trim();
+  }
+
+  const discountNum = Number(masterRow.discount);
+  const discountPercent =
+    Number.isFinite(discountNum) && discountNum >= 0 ? discountNum : null;
+
+  let imageUrlField;
+  if (typeof masterRow.imageUrl === 'string' && masterRow.imageUrl.trim()) {
+    imageUrlField = masterRow.imageUrl.trim();
+  }
+
+  const fields = {
+    name,
+    description: desc ?? '',
+    cuisineCategoryId: cuisineIdOpt,
+    cuisineCategoryName: cNameFull,
+    cuisineCategory: cNameFull,
+    menuCategoryId: menuIdOpt,
+    menuCategoryName: mNameFull,
+    menuCategory: mNameFull,
+    itemCategoryId: itemCatIdOpt,
+    itemCategoryName: iNameFull,
+    itemCategory: iNameFull,
+    price,
+    prepTime: prepTimeMerged,
+    quantity: 0,
+    available: true,
+    tags: tagList,
+    itemType,
+    masterProductId: mid,
+    menuGroupIds: [],
+    menuGroupId: null,
+    ...(discountPercent != null ? { discountPercent } : {}),
+    ...(imageUrlField ? { imageUrl: imageUrlField } : {}),
+  };
+
+  return createProduct(sid, fields);
+}
+
+async function existsMasterProductByNormalizedName(norm) {
+  const key = String(norm ?? '').trim();
+  if (!key) return true;
+  if (isDemoExplorer()) {
+    return DEMO_MASTER_PRODUCTS.some((m) => m.normalizedName === key || normalizeProductNameForMatch(m.name) === key);
+  }
+  const q = query(collection(db, MASTER_PRODUCTS_COL), where('normalizedName', '==', key), limit(1));
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
+
+/**
+ * When a seller creates a catalog item manually, optionally append to `masterProducts`
+ * when no similarly named master row exists.
+ */
+export async function maybeSyncSellerNewProductToMaster(sellerCreatedFields) {
+  if (isDemoExplorer()) return;
+  const name = String(sellerCreatedFields?.name ?? '').trim();
+  if (!name) return;
+
+  const norm =
+    normalizeProductNameForMatch(sellerCreatedFields.normalizedName || name || '') || '';
+
+  try {
+    if (norm && (await existsMasterProductByNormalizedName(norm))) {
+      return;
+    }
+  } catch {
+    /* if query unsupported / index missing — skip syncing */
+    return;
+  }
+
+  const cat = categoriesFlatFromMaster(sellerCreatedFields);
+  const tagList = Array.isArray(sellerCreatedFields.tags)
+    ? sellerCreatedFields.tags.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+  const itemTypeRaw = sellerCreatedFields.itemType;
+  const itemType =
+    itemTypeRaw == null || String(itemTypeRaw).trim() === ''
+      ? null
+      : String(itemTypeRaw).trim();
+  const priceNum = Number(sellerCreatedFields.price);
+  const price = Number.isFinite(priceNum) ? priceNum : null;
+
+  const payload = {
+    name,
+    normalizedName: norm,
+    tags: tagList,
+    itemType,
+    createdBy: 'seller',
+    cuisineCategoryId: cat.cuisineCategoryId,
+    cuisineCategoryName: cat.cuisineCategoryName,
+    menuCategoryId: cat.menuCategoryId,
+    menuCategoryName: cat.menuCategoryName,
+    ...(cat.itemCategoryId ? { itemCategoryId: cat.itemCategoryId } : {}),
+    ...(cat.itemCategoryName ? { itemCategoryName: cat.itemCategoryName } : {}),
+    ...(price != null && Number.isFinite(price) ? { price } : {}),
+    ...(typeof sellerCreatedFields.description === 'string' && sellerCreatedFields.description.trim()
+      ? { description: sellerCreatedFields.description.trim() }
+      : {}),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    await addDoc(collection(db, MASTER_PRODUCTS_COL), payload);
+  } catch {
+    /* best-effort */
+  }
+}
+
 export function filterGlobalMenuCategoriesByCuisine(
   allMenus,
   cuisineId,

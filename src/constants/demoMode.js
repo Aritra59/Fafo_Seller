@@ -88,6 +88,14 @@ export const DEMO_ORDERS = [
   demoOrder('demo-o-6', 'cancelled', '+910000000106', 'Demo Guest', [{ name: 'Vada', price: 20, qty: 1 }], 20, 'app'),
 ];
 
+/** Mirrors admin `itemCategories` collection — demo explorer only. */
+export const DEMO_GLOBAL_ITEM_CATEGORIES = [
+  { id: 'demo-iic-food', name: 'Food', sortOrder: 1, active: true },
+  { id: 'demo-iic-tea', name: 'Tea', sortOrder: 2, active: true, itemType: 'Tea & coffee' },
+  { id: 'demo-iic-coffee', name: 'Coffee', sortOrder: 3, active: true, itemType: 'Tea & coffee' },
+  { id: 'demo-iic-drinks', name: 'Drinks', sortOrder: 4, active: true, itemType: 'Drinks' },
+];
+
 export const DEMO_PRODUCTS = [
   {
     id: 'demo-p-1',
@@ -95,8 +103,11 @@ export const DEMO_PRODUCTS = [
     name: 'Masala Dosa',
     price: 80,
     cuisineCategory: 'South Indian',
-    category: 'Breakfast › Classics',
+    category: 'Breakfast › Classics › Plates',
     quantity: 20,
+    itemCategoryId: 'demo-iic-food',
+    itemCategoryName: 'Food',
+    itemType: 'Food',
     tags: ['Fast Selling'],
     discountLabel: '₹10 off',
     discountPercent: null,
@@ -106,13 +117,60 @@ export const DEMO_PRODUCTS = [
     sellerId: DEMO_SELLER_ID,
     name: 'Filter Coffee',
     price: 30,
-    cuisineCategory: 'Beverages',
-    category: 'Drinks › Hot',
+    cuisineCategory: 'South Indian',
+    category: 'Breakfast › Classics › Coffee',
     quantity: 50,
+    itemCategoryId: 'demo-iic-coffee',
+    itemCategoryName: 'Coffee',
+    itemType: 'Tea & coffee',
     tags: [],
     discountLabel: null,
     discountPercent: 15,
   },
+];
+
+/** Sample catalog rows for master list UX in demo explorer (read-only). */
+export const DEMO_MASTER_PRODUCTS = [
+  {
+    id: 'demo-master-1',
+    name: 'Ginger chai',
+    normalizedName: 'ginger chai',
+    itemType: 'Tea & coffee',
+    tags: ['bestseller'],
+    price: 25,
+    cuisineCategoryId: 'demo-gcu-1',
+    cuisineCategoryName: 'South Indian',
+    menuCategoryId: 'demo-gmu-1',
+    menuCategoryName: 'Breakfast › Classics',
+    itemCategoryId: 'demo-iic-tea',
+    itemCategoryName: 'Tea',
+  },
+  {
+    id: 'demo-master-2',
+    name: 'Sweet lime soda',
+    normalizedName: 'sweet lime soda',
+    itemType: 'Drinks',
+    tags: ['cooling'],
+    price: 40,
+    cuisineCategoryId: 'demo-gcu-1',
+    cuisineCategoryName: 'South Indian',
+    menuCategoryId: 'demo-gmu-1',
+    menuCategoryName: 'Breakfast › Classics',
+    itemCategoryId: 'demo-iic-drinks',
+    itemCategoryName: 'Drinks',
+  },
+];
+
+export const DEMO_GLOBAL_TAGS = [
+  { id: 'demo-gtg-1', name: 'bestseller', sortOrder: 1, active: true },
+  { id: 'demo-gtg-2', name: 'spicy', sortOrder: 2, active: true },
+  { id: 'demo-gtg-3', name: 'Fast Selling', sortOrder: 3, active: true },
+];
+
+export const DEMO_GLOBAL_ITEM_TYPES = [
+  { id: 'demo-git-1', name: 'Food', sortOrder: 1, active: true },
+  { id: 'demo-git-2', name: 'Tea & coffee', sortOrder: 2, active: true },
+  { id: 'demo-git-3', name: 'Drinks', sortOrder: 3, active: true },
 ];
 
 export const DEMO_COMBOS = [

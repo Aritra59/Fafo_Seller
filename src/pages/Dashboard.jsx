@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { DashboardAdSection } from '../components/ads/DashboardAdSection';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useAuth } from '../hooks/useAuth';
+import { useSellerBillingSummary } from '../hooks/useSellerBillingSummary';
 import { useSeller } from '../hooks/useSeller';
 import { getBuyerPhone, getOrderTimeMs } from '../services/analyticsService';
 import { subscribeMenuGroupsBySellerId } from '../services/menuGroupsService';
@@ -104,6 +105,13 @@ function lowStockCount(products) {
     if (Number.isFinite(q) && q > 0 && q < 5) n += 1;
   }
   return n;
+}
+
+function formatInrShort(n) {
+  if (n === null || n === undefined) return '—';
+  const x = Number(n);
+  if (!Number.isFinite(x)) return '—';
+  return `₹${x.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 export function Dashboard() {
@@ -255,6 +263,11 @@ export function Dashboard() {
   }, [sellerId]);
 
   const stats = useMemo(() => computeOrderStats(orderRows), [orderRows]);
+  const { balance: billingBalance, effectiveAvgDaily, avgDailyFromBilling } = useSellerBillingSummary(
+    sellerId,
+    seller,
+    orderRows,
+  );
   const revenue = useMemo(() => computeRevenueTotals(orderRows), [orderRows]);
   const topItem = useMemo(() => computeTopItem(orderRows), [orderRows]);
   const repeatPct = useMemo(() => repeatCustomerPercent(orderRows), [orderRows]);
@@ -616,6 +629,32 @@ export function Dashboard() {
           </Link>
         </div>
       </section>
+
+      {!demoExplore ? (
+        <Link
+          to="/billing"
+          className="dashboard-v2-billing-cta"
+          aria-label="Billing: current balance and daily usage"
+        >
+          <div className="dashboard-v2-billing-cta__grid">
+            <article className="dashboard-v2-kpi dashboard-v2-kpi--billing">
+              <p className="dashboard-v2-kpi-value">{formatInrShort(billingBalance)}</p>
+              <p className="dashboard-v2-kpi-label">Current balance</p>
+            </article>
+            <article className="dashboard-v2-kpi dashboard-v2-kpi--billing">
+              <p className="dashboard-v2-kpi-value">{formatInrShort(effectiveAvgDaily)}</p>
+              <p className="dashboard-v2-kpi-label">
+                Daily usage
+                {avgDailyFromBilling ? (
+                  <span className="dashboard-v2-billing-cta__hint"> · from billing</span>
+                ) : (
+                  <span className="dashboard-v2-billing-cta__hint"> · est.</span>
+                )}
+              </p>
+            </article>
+          </div>
+        </Link>
+      ) : null}
 
       {demoExplore ? (
         <section className="dashboard-demo-cta card" style={{ marginTop: '0.85rem' }} aria-label="Demo mode">

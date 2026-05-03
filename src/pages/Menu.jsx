@@ -1,19 +1,25 @@
+import { deleteField } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useRegisterPageTitleSuffix } from '../context/SellerPageTitleContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSeller } from '../hooks/useSeller';
 import {
   createCombo,
+  createSellerProductFromMaster,
   deleteComboForSeller,
   deleteProduct,
+  fetchMasterProductsPage,
   getCuisineCategoryLabel,
+  getProductItemCategoryLabel,
   getProductMenuCategoryLabel,
+  parseStoredProductCategories,
   recomputeSellerSlotCount,
   subscribeCombosBySellerId,
   subscribeGlobalCuisineCategories,
+  subscribeGlobalItemCategories,
   subscribeGlobalMenuCategories,
   subscribeProductsBySellerId,
   updateComboForSeller,
@@ -28,6 +34,8 @@ import { normalizeShopCode } from '../utils/shopCode';
 import { publicShopByCodeUrl } from '../utils/publicShopUrl';
 import {
   compressImageToJpegBlob,
+  deleteComboStoredImageSlots,
+  deleteStorageObjectByDownloadUrl,
   isAcceptedImageType,
   uploadComboImageJpeg,
   uploadComboImageJpegAt,
@@ -147,38 +155,165 @@ function menuFilterLabel(p, globalMenus) {
   return getProductMenuCategoryLabel(p);
 }
 
-/** Cuisine → menu category → items (sorted). */
-function buildProductHierarchy(productRows) {
-  const byCuisine = new Map();
-  for (const p of productRows) {
-    const c = getCuisineCategoryLabel(p);
-    const m = getProductMenuCategoryLabel(p);
-    if (!byCuisine.has(c)) byCuisine.set(c, new Map());
-    const byMenu = byCuisine.get(c);
-    if (!byMenu.has(m)) byMenu.set(m, []);
-    byMenu.get(m).push(p);
+const OTHER_ITEM_CATEGORY_LABEL = 'Other';
+
+/** Avoid showing ambiguous tokens as headings when stored names are missing. */
+function cuisineSectionHeading(rows, globalCuisines) {
+  for (const p of rows || []) {
+    const n = p?.cuisineCategoryName;
+    if (typeof n === 'string' && n.trim()) return n.trim();
+  }
+  const pid = String(rows?.[0]?.cuisineCategoryId ?? '').trim();
+  if (pid && globalCuisines?.length) {
+    const row = globalCuisines.find((c) => c.id === pid && c.active !== false);
+    if (typeof row?.name === 'string' && row.name.trim()) return row.name.trim();
+  }
+  const legacy = typeof rows?.[0]?.cuisineCategory === 'string' ? rows[0].cuisineCategory.trim() : '';
+  if (legacy) return legacy;
+  if (rows?.length) {
+    const fb = getCuisineCategoryLabel(rows[0]);
+    if (fb && fb !== UNCATEGORIZED_CUISINE) return fb;
+  }
+  return UNCATEGORIZED_CUISINE;
+}
+
+function menuSectionHeading(rows, globalMenus) {
+  for (const p of rows || []) {
+    const n = p?.menuCategoryName;
+    if (typeof n === 'string' && n.trim()) return n.trim();
+  }
+  const pid = String(rows?.[0]?.menuCategoryId ?? '').trim();
+  if (pid && globalMenus?.length) {
+    const row = globalMenus.find((m) => m.id === pid && m.active !== false);
+    if (typeof row?.name === 'string' && row.name.trim()) return row.name.trim();
+  }
+  const legacy = typeof rows?.[0]?.menuCategory === 'string' ? rows[0].menuCategory.trim() : '';
+  if (legacy) return legacy;
+  return rows?.length ? getProductMenuCategoryLabel(rows[0]) : UNCATEGORIZED_MENU;
+}
+
+function cuisineGroupingKey(p) {
+  const id = String(p?.cuisineCategoryId ?? '').trim();
+  return id ? `cid:${id}` : `lbl:${getCuisineCategoryLabel(p)}`;
+}
+
+function menuGroupingKey(p) {
+  const id = String(p?.menuCategoryId ?? '').trim();
+  return id ? `mid:${id}` : `lbl:${getProductMenuCategoryLabel(p)}`;
+}
+
+function itemCategoryBucketKey(p) {
+  const id = String(p.itemCategoryId ?? '').trim();
+  if (id) return `id:${id}`;
+  const { itemCategory } = parseStoredProductCategories(
+    typeof p.category === 'string' ? p.category : '',
+  );
+  const legacy = String(itemCategory ?? '').trim();
+  if (legacy) return `legacy:${legacy.toLowerCase()}`;
+  return 'other:';
+}
+
+function labelForItemCategoryBucket(bucketKey, items, globalItemCategories) {
+  for (const p of items || []) {
+    const lab = getProductItemCategoryLabel(p);
+    if (lab) return lab;
+  }
+  if (bucketKey.startsWith('id:')) {
+    const docId = bucketKey.slice(3);
+    const row = globalItemCategories.find((c) => c.id === docId && c.active !== false);
+    if (typeof row?.name === 'string' && row.name.trim()) return row.name.trim();
+    return OTHER_ITEM_CATEGORY_LABEL;
+  }
+  if (bucketKey.startsWith('legacy:')) {
+    const rest = bucketKey.slice(7);
+    return rest || OTHER_ITEM_CATEGORY_LABEL;
+  }
+  return OTHER_ITEM_CATEGORY_LABEL;
+}
+
+function sortMetaForItemCategoryBucket(bucketKey, globalItemCategories) {
+  if (bucketKey.startsWith('id:')) {
+    const docId = bucketKey.slice(3);
+    const row = globalItemCategories.find((c) => c.id === docId);
+    const n = Number(row?.sortOrder);
+    return Number.isFinite(n) ? n : 999;
+  }
+  if (bucketKey.startsWith('legacy:')) return 500;
+  return 1000;
+}
+
+/** Within one menu label bucket: partition by item category, sort buckets then names. */
+function partitionMenuRowsByItemCategory(menuRows, globalItemCategories) {
+  const buckets = new Map();
+  for (const p of menuRows) {
+    const bk = itemCategoryBucketKey(p);
+    if (!buckets.has(bk)) buckets.set(bk, []);
+    buckets.get(bk).push(p);
   }
 
-  const cuisineKeys = [...byCuisine.keys()].sort((a, b) => {
-    if (a === UNCATEGORIZED_CUISINE) return 1;
-    if (b === UNCATEGORIZED_CUISINE) return -1;
-    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  const out = [...buckets.entries()].map(([bucketKey, items]) => ({
+    bucketKey,
+    label: labelForItemCategoryBucket(bucketKey, items, globalItemCategories),
+    sortMeta: sortMetaForItemCategoryBucket(bucketKey, globalItemCategories),
+    items: [...items].sort((a, b) =>
+      productName(a).localeCompare(productName(b), undefined, { sensitivity: 'base' }),
+    ),
+  }));
+
+  out.sort((a, b) => {
+    const oa = a.bucketKey === 'other:' ? 1 : 0;
+    const ob = b.bucketKey === 'other:' ? 1 : 0;
+    if (oa !== ob) return oa - ob;
+    if (a.sortMeta !== b.sortMeta) return a.sortMeta - b.sortMeta;
+    return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+  });
+  return out;
+}
+
+/** Cuisine → menu category → item category groups → items (headings prefer name fields). */
+function buildProductHierarchyWithItemCategories(productRows, globalCuisines, globalMenus, globalItemCategories) {
+  const byCuisineKey = new Map();
+  for (const p of productRows) {
+    const ck = cuisineGroupingKey(p);
+    const mk = menuGroupingKey(p);
+    if (!byCuisineKey.has(ck)) byCuisineKey.set(ck, new Map());
+    const byMenu = byCuisineKey.get(ck);
+    if (!byMenu.has(mk)) byMenu.set(mk, []);
+    byMenu.get(mk).push(p);
+  }
+
+  function flattenMenus(byMenuMap) {
+    return ([]).concat(...byMenuMap.values());
+  }
+
+  const cuisineBlocks = [...byCuisineKey.entries()].map(([cKey, byMenu]) => ({
+    cuisineKey: cKey,
+    cuisineTitle: cuisineSectionHeading(flattenMenus(byMenu), globalCuisines),
+    byMenu,
+  }));
+
+  cuisineBlocks.sort((a, b) => {
+    if (a.cuisineTitle === UNCATEGORIZED_CUISINE) return 1;
+    if (b.cuisineTitle === UNCATEGORIZED_CUISINE) return -1;
+    return a.cuisineTitle.localeCompare(b.cuisineTitle, undefined, { sensitivity: 'base' });
   });
 
-  return cuisineKeys.map((cuisine) => {
-    const byMenu = byCuisine.get(cuisine);
-    const menuKeys = [...byMenu.keys()].sort((a, b) => {
-      if (a === UNCATEGORIZED_MENU) return 1;
-      if (b === UNCATEGORIZED_MENU) return -1;
-      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  return cuisineBlocks.map(({ cuisineTitle, byMenu }) => {
+    const menuSections = [...byMenu.entries()].map(([mKey, items]) => ({
+      menuKey: mKey,
+      menuLabel: menuSectionHeading(items, globalMenus),
+      itemCategoryBuckets: partitionMenuRowsByItemCategory(items, globalItemCategories),
+    }));
+    menuSections.sort((a, b) => {
+      if (a.menuLabel === UNCATEGORIZED_MENU) return 1;
+      if (b.menuLabel === UNCATEGORIZED_MENU) return -1;
+      return a.menuLabel.localeCompare(b.menuLabel, undefined, { sensitivity: 'base' });
     });
     return {
-      cuisine,
-      menuSections: menuKeys.map((menuLabel) => ({
+      cuisine: cuisineTitle,
+      menuSections: menuSections.map(({ menuLabel, itemCategoryBuckets }) => ({
         menuLabel,
-        items: [...byMenu.get(menuLabel)].sort((a, b) =>
-          productName(a).localeCompare(productName(b), undefined, { sensitivity: 'base' }),
-        ),
+        itemCategoryBuckets,
       })),
     };
   });
@@ -254,6 +389,7 @@ export function Menu() {
   const [selectedMenuKey, setSelectedMenuKey] = useState('');
   const [globalCuisines, setGlobalCuisines] = useState([]);
   const [globalMenus, setGlobalMenus] = useState([]);
+  const [globalItemCategories, setGlobalItemCategories] = useState([]);
   const [globalCuisinesLoad, setGlobalCuisinesLoad] = useState('loading');
   const [globalMenusLoad, setGlobalMenusLoad] = useState('loading');
   const [menuGroups, setMenuGroups] = useState([]);
@@ -269,10 +405,21 @@ export function Menu() {
   const [comboDiscountFlat, setComboDiscountFlat] = useState('');
   const [comboSelectedIds, setComboSelectedIds] = useState([]);
   const [comboImageFiles, setComboImageFiles] = useState([]);
+  /** Saved combo URLs the user tapped × on (applied on Save). */
+  const [comboRemovedStoredUrls, setComboRemovedStoredUrls] = useState([]);
+  /** Object URLs for `comboImageFiles` previews — revoked when files change. */
+  const [comboFileObjectUrls, setComboFileObjectUrls] = useState([]);
   const [comboBusy, setComboBusy] = useState(false);
   const [comboMsg, setComboMsg] = useState('');
   const [deleteBusyId, setDeleteBusyId] = useState(null);
   const [deleteComboBusyId, setDeleteComboBusyId] = useState(null);
+  const [masterOverlayOpen, setMasterOverlayOpen] = useState(false);
+  const [masterRows, setMasterRows] = useState([]);
+  const [masterCursor, setMasterCursor] = useState(null);
+  const [masterHasMore, setMasterHasMore] = useState(false);
+  const [masterLoading, setMasterLoading] = useState(false);
+  const [masterBusyId, setMasterBusyId] = useState(null);
+  const [masterError, setMasterError] = useState('');
   const demoReadOnly = isDemoExplorer();
   const tabHeading = TABS.find((t) => t.id === tab)?.label ?? '';
   useRegisterPageTitleSuffix(tabHeading);
@@ -417,6 +564,7 @@ export function Menu() {
       df != null && Number.isFinite(Number(df)) ? String(df) : '',
     );
     setComboImageFiles([]);
+    setComboRemovedStoredUrls([]);
     setComboMsg('');
   }, [tab, comboEditId, combos, combosLoading, setSearchParams]);
 
@@ -433,8 +581,17 @@ export function Menu() {
     setComboDiscountFlat('');
     setComboSelectedIds([]);
     setComboImageFiles([]);
+    setComboRemovedStoredUrls([]);
     setComboMsg('');
   }, [tab, comboEditId, newComboOpen]);
+
+  useEffect(() => {
+    const urls = comboImageFiles.map((f) => URL.createObjectURL(f));
+    setComboFileObjectUrls(urls);
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [comboImageFiles]);
 
   useEffect(() => {
     setGlobalCuisinesLoad('loading');
@@ -461,6 +618,13 @@ export function Menu() {
         setGlobalMenus([]);
         setGlobalMenusLoad('error');
       },
+    );
+  }, []);
+
+  useEffect(() => {
+    return subscribeGlobalItemCategories(
+      (rows) => setGlobalItemCategories(rows),
+      () => setGlobalItemCategories([]),
     );
   }, []);
 
@@ -582,7 +746,91 @@ export function Menu() {
     return rows;
   }, [products, search, selectedCuisineKey, selectedMenuKey]);
 
-  const productHierarchy = useMemo(() => buildProductHierarchy(filtered), [filtered]);
+  const productHierarchy = useMemo(
+    () =>
+      buildProductHierarchyWithItemCategories(
+        filtered,
+        globalCuisines,
+        globalMenus,
+        globalItemCategories,
+      ),
+    [filtered, globalCuisines, globalMenus, globalItemCategories],
+  );
+
+  const sellerMasterProductIds = useMemo(() => {
+    const s = new Set();
+    for (const p of products) {
+      const id = String(p.masterProductId ?? '').trim();
+      if (id) s.add(id);
+    }
+    return s;
+  }, [products]);
+
+  async function loadMasterCatalogFirstPage() {
+    setMasterError('');
+    setMasterLoading(true);
+    setMasterCursor(null);
+    setMasterRows([]);
+    try {
+      const res = await fetchMasterProductsPage(24, null);
+      setMasterRows(Array.isArray(res.rows) ? res.rows : []);
+      setMasterHasMore(Boolean(res?.hasMore));
+      setMasterCursor(res?.nextCursor ?? null);
+    } catch (err) {
+      setMasterRows([]);
+      setMasterError(err.message ?? 'Could not load master list.');
+    } finally {
+      setMasterLoading(false);
+    }
+  }
+
+  async function loadMasterCatalogMore() {
+    if (!masterCursor) return;
+    setMasterLoading(true);
+    try {
+      const res = await fetchMasterProductsPage(24, masterCursor);
+      const nextRows = Array.isArray(res.rows) ? res.rows : [];
+      setMasterRows((prev) => [...prev, ...nextRows]);
+      setMasterHasMore(Boolean(res?.hasMore));
+      setMasterCursor(res?.nextCursor ?? null);
+    } catch (err) {
+      setMasterError(err.message ?? 'Could not load more.');
+    } finally {
+      setMasterLoading(false);
+    }
+  }
+
+  async function handleAddMasterProductToSeller(row) {
+    if (!seller?.id || !row?.id) return;
+    if (demoReadOnly) {
+      window.alert('Demo mode is read-only. Sign in to add master items.');
+      return;
+    }
+    setMasterError('');
+    setMasterBusyId(String(row.id));
+    try {
+      await createSellerProductFromMaster(seller.id, row);
+      recomputeSellerSlotCount(seller.id).catch(() => {});
+    } catch (err) {
+      setMasterError(err.message ?? 'Could not add item.');
+    } finally {
+      setMasterBusyId(null);
+    }
+  }
+
+  function openMasterOverlay() {
+    setMasterOverlayOpen(true);
+    void loadMasterCatalogFirstPage();
+  }
+
+  function closeMasterOverlay() {
+    setMasterOverlayOpen(false);
+    setMasterBusyId(null);
+    setMasterError('');
+    setMasterRows([]);
+    setMasterCursor(null);
+    setMasterHasMore(false);
+  }
 
   const combosMatchingCategories = useMemo(() => {
     if (!selectedCuisineKey && !selectedMenuKey) return combos;
@@ -683,6 +931,10 @@ export function Menu() {
     [editingCombo],
   );
 
+  const comboSavedImagePreviewUrls = editingComboExistingImageUrls.filter(
+    (u) => !comboRemovedStoredUrls.includes(u),
+  );
+
   const shopViewUrl = useMemo(() => {
     const code = normalizeShopCode(seller?.shopCode ?? seller?.code ?? '');
     return code ? publicShopByCodeUrl(code) : '';
@@ -741,6 +993,7 @@ export function Menu() {
         setComboDiscountFlat('');
         setComboSelectedIds([]);
         setComboImageFiles([]);
+        setComboRemovedStoredUrls([]);
         setSearchParams({ tab: 'combos' }, { replace: true });
       }
       setComboMsg('Combo deleted.');
@@ -816,21 +1069,71 @@ export function Menu() {
         await updateComboForSeller(editingId, seller.id, fields);
       }
 
-      const urls = [];
-      for (let i = 0; i < comboImageFiles.length; i++) {
-        const file = comboImageFiles[i];
-        const blob = await compressImageToJpegBlob(file);
-        if (i === 0) {
-          urls.push(await uploadComboImageJpeg(seller.id, targetId, blob));
-        } else {
-          urls.push(await uploadComboImageJpegAt(seller.id, targetId, i, blob));
+      const comboBefore = editingId ? combos.find((x) => String(x.id) === String(editingId)) : null;
+      const stripeBefore = comboBefore ? comboStripeUrls(comboBefore) : [];
+      const toRemoveStored = stripeBefore.filter((u) => comboRemovedStoredUrls.includes(u));
+      const keptStored = stripeBefore.filter((u) => !comboRemovedStoredUrls.includes(u));
+
+      const uploadMergedBlobsSequence = async (blobsOrdered) => {
+        const blobs = blobsOrdered.slice(0, 6);
+        await deleteComboStoredImageSlots(seller.id, targetId);
+        const finalUrls = [];
+        for (let i = 0; i < blobs.length; i++) {
+          const b = blobs[i];
+          finalUrls.push(
+            i === 0
+              ? await uploadComboImageJpeg(seller.id, targetId, b)
+              : await uploadComboImageJpegAt(seller.id, targetId, i, b),
+          );
         }
-      }
-      if (urls.length) {
-        await updateComboForSeller(targetId, seller.id, {
-          imageUrl: urls[0],
-          imageUrls: urls,
-        });
+        if (finalUrls.length === 0) {
+          await updateComboForSeller(targetId, seller.id, {
+            imageUrl: null,
+            imageUrls: deleteField(),
+          });
+        } else {
+          await updateComboForSeller(targetId, seller.id, {
+            imageUrl: finalUrls[0],
+            imageUrls: finalUrls,
+          });
+        }
+      };
+
+      if (!editingId) {
+        if (comboImageFiles.length === 0) {
+          /* new combo — no optional images selected */
+        } else {
+          const blobs = [];
+          for (const f of comboImageFiles) {
+            blobs.push(await compressImageToJpegBlob(f));
+          }
+          await uploadMergedBlobsSequence(blobs);
+        }
+      } else if (comboImageFiles.length > 0) {
+        const keptBlobs = [];
+        for (const u of keptStored) {
+          const res = await fetch(u);
+          if (!res.ok) {
+            throw new Error('Could not load a remaining combo photo. Save again or reconnect.');
+          }
+          keptBlobs.push(await res.blob());
+        }
+        const newBlobs = [];
+        for (const file of comboImageFiles) newBlobs.push(await compressImageToJpegBlob(file));
+        await uploadMergedBlobsSequence([...keptBlobs, ...newBlobs]);
+      } else if (toRemoveStored.length > 0) {
+        for (const u of toRemoveStored) await deleteStorageObjectByDownloadUrl(u);
+        if (keptStored.length === 0) {
+          await updateComboForSeller(targetId, seller.id, {
+            imageUrl: null,
+            imageUrls: deleteField(),
+          });
+        } else {
+          await updateComboForSeller(targetId, seller.id, {
+            imageUrl: keptStored[0],
+            imageUrls: keptStored,
+          });
+        }
       }
 
       setComboName('');
@@ -839,6 +1142,7 @@ export function Menu() {
       setComboDiscountFlat('');
       setComboSelectedIds([]);
       setComboImageFiles([]);
+      setComboRemovedStoredUrls([]);
       comboHydrateRef.current = '';
       comboHydrateSigRef.current = '';
       setSearchParams({ tab: 'combos' }, { replace: true });
@@ -870,9 +1174,6 @@ export function Menu() {
     setComboMsg('');
   }
 
-  function handleAddFromMaster() {
-    window.alert('Browse master catalog — coming soon.');
-  }
 
   function closeComboForm() {
     comboHydrateRef.current = '';
@@ -884,8 +1185,21 @@ export function Menu() {
     setComboDiscountFlat('');
     setComboSelectedIds([]);
     setComboImageFiles([]);
+    setComboRemovedStoredUrls([]);
     setComboMsg('');
     setSearchParams({ tab: 'combos' }, { replace: true });
+  }
+
+  function markComboStoredUrlRemoved(url) {
+    const s = String(url ?? '').trim();
+    if (!s) return;
+    setComboRemovedStoredUrls((prev) => (prev.includes(s) ? prev : [...prev, s]));
+  }
+
+  function removeComboDraftFileAt(idx) {
+    const i = Number(idx);
+    if (!Number.isFinite(i)) return;
+    setComboImageFiles((prev) => prev.filter((_, j) => j !== i));
   }
 
   const globalDiscountText =
@@ -956,7 +1270,9 @@ export function Menu() {
       </div>
 
       <div className="menu-page-filter-sticky card">
-        <div className="menu-page-search-row">
+        <div
+          className={`menu-page-search-row${tab === 'items' ? ' menu-page-search-row--with-master' : ''}`}
+        >
           <label className="menu-page-search-wrap" htmlFor="menu-search">
             <span className="sr-only">Search</span>
             <Search className="menu-page-search-icon" size={20} strokeWidth={2.1} aria-hidden />
@@ -970,6 +1286,15 @@ export function Menu() {
               autoComplete="off"
             />
           </label>
+          {tab === 'items' ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn--sm menu-page-master-list-btn"
+              onClick={openMasterOverlay}
+            >
+              Master list
+            </button>
+          ) : null}
         </div>
         <div className="menu-page-filters__selects">
           <label className="menu-items-toolbar__field menu-items-toolbar__field--select">
@@ -1044,17 +1369,6 @@ export function Menu() {
 
       {tab === 'items' ? (
         <>
-          <div className="menu-items-toolbar card stack">
-            <div className="menu-items-toolbar__actions">
-              <Link to="/menu/add" className="btn btn-primary btn--sm">
-                Add custom item
-              </Link>
-              <button type="button" className="btn btn-ghost btn--sm" onClick={handleAddFromMaster}>
-                Master list
-              </button>
-            </div>
-          </div>
-
           {productsError ? (
             <p className="error menu-page-products-error" style={{ margin: 0 }}>
               {productsError.message ?? 'Could not load items.'}
@@ -1081,60 +1395,65 @@ export function Menu() {
                     <span className="menu-page-cuisine-prefix">Cuisine</span>
                     <span className="menu-page-cuisine-name">{block.cuisine}</span>
                   </h2>
-                  {block.menuSections.map(({ menuLabel, items }) => (
+                  {block.menuSections.map(({ menuLabel, itemCategoryBuckets }) => (
                     <div key={`${block.cuisine}-${menuLabel}`} className="menu-page-menu-block">
                       <h3 className="menu-page-menu-heading">
                         <span className="menu-page-menu-prefix">Menu</span>
                         <span className="menu-page-menu-name">{menuLabel}</span>
                       </h3>
-                      <ul className="menu-admin-product-grid menu-admin-product-grid--compact">
-                        {items.map((p) => {
-                          const price = productPrice(p);
-                          const img = productImageUrl(p);
-                          const qty = Number(p.quantity);
-                          const stockOk = Number.isFinite(qty);
+                      {itemCategoryBuckets.map((b) => (
+                        <div key={b.bucketKey} className="menu-page-subcat-wrap">
+                          <h4 className="menu-page-itemcat-heading">{b.label}</h4>
+                          <ul className="menu-admin-product-grid menu-admin-product-grid--compact">
+                            {b.items.map((p) => {
+                              const price = productPrice(p);
+                              const img = productImageUrl(p);
+                              const qty = Number(p.quantity);
+                              const stockOk = Number.isFinite(qty);
 
-                          return (
-                            <li key={p.id}>
-                              <article className="menu-admin-product-card menu-admin-product-card--compact card">
-                                <div
-                                  className="menu-admin-product-card__media"
-                                  aria-hidden={img ? undefined : true}
-                                >
-                                  {img ? (
-                                    <img src={img} alt="" loading="lazy" />
-                                  ) : (
-                                    <span className="menu-item-card-placeholder">No image</span>
-                                  )}
-                                </div>
-                                <div className="menu-admin-product-card__body">
-                                  <h3 className="menu-item-card-name">{productName(p)}</h3>
-                                  <p className="menu-item-card-price">{formatPrice(price)}</p>
-                                  <p
-                                    className="menu-admin-product-card__qty muted"
-                                    style={{ margin: 0, fontSize: '0.8125rem' }}
-                                  >
-                                    Available items: {stockOk ? String(Math.max(0, Math.floor(qty))) : '—'}
-                                  </p>
-                                  <div className="menu-admin-product-card__actions">
-                                    <Link to={`/menu/edit/${p.id}`} className="btn btn-ghost btn--sm">
-                                      Edit
-                                    </Link>
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost btn--sm menu-admin-product-card__del"
-                                      disabled={demoReadOnly || deleteBusyId === p.id}
-                                      onClick={() => void handleDeleteProduct(p.id)}
+                              return (
+                                <li key={p.id}>
+                                  <article className="menu-admin-product-card menu-admin-product-card--compact card">
+                                    <div
+                                      className="menu-admin-product-card__media"
+                                      aria-hidden={img ? undefined : true}
                                     >
-                                      {deleteBusyId === p.id ? '…' : 'Delete'}
-                                    </button>
-                                  </div>
-                                </div>
-                              </article>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                                      {img ? (
+                                        <img src={img} alt="" loading="lazy" />
+                                      ) : (
+                                        <span className="menu-item-card-placeholder">No image</span>
+                                      )}
+                                    </div>
+                                    <div className="menu-admin-product-card__body">
+                                      <h3 className="menu-item-card-name">{productName(p)}</h3>
+                                      <p className="menu-item-card-price">{formatPrice(price)}</p>
+                                      <p
+                                        className="menu-admin-product-card__qty muted"
+                                        style={{ margin: 0, fontSize: '0.8125rem' }}
+                                      >
+                                        Available items: {stockOk ? String(Math.max(0, Math.floor(qty))) : '—'}
+                                      </p>
+                                      <div className="menu-admin-product-card__actions">
+                                        <Link to={`/menu/edit/${p.id}`} className="btn btn-ghost btn--sm">
+                                          Edit
+                                        </Link>
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost btn--sm menu-admin-product-card__del"
+                                          disabled={demoReadOnly || deleteBusyId === p.id}
+                                          onClick={() => void handleDeleteProduct(p.id)}
+                                        >
+                                          {deleteBusyId === p.id ? '…' : 'Delete'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </article>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </section>
@@ -1246,40 +1565,83 @@ export function Menu() {
                   placeholder="e.g. Buy 2 get 1 · Today only"
                 />
               </label>
-              <label className="menu-combo-field">
-                <span className="label">Combo images (optional, up to 6)</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  multiple
-                  onChange={onComboImagesPick}
-                />
-                {comboImageFiles.length ? (
-                  <span className="muted" style={{ fontSize: '0.8125rem' }}>
-                    {comboImageFiles.length} new file{comboImageFiles.length === 1 ? '' : 's'} selected
-                    {isEditingCombo && editingComboExistingImageUrls.length
-                      ? ' — replaces current images when you save.'
-                      : ''}
-                  </span>
-                ) : null}
-                {isEditingCombo && editingComboExistingImageUrls.length > 0 ? (
-                  <div className="menu-combo-existing-images" aria-label="Current combo images">
+              <div className="menu-combo-field">
+                <span className="label" id="menu-combo-images-label">
+                  Combo images (optional, up to 6)
+                </span>
+                <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+                  JPG, PNG, or WebP — applied when you save. Tap ✕ on a thumbnail to drop that photo,
+                  or use Add / replace to choose new ones.
+                </p>
+                <div className="menu-combo-image-toolbar">
+                  <label className="btn btn-ghost btn--sm menu-combo-image-file-btn">
+                    {comboFileObjectUrls.length || comboSavedImagePreviewUrls.length
+                      ? 'Add / replace photos'
+                      : 'Choose photos'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      multiple
+                      className="sr-only"
+                      aria-labelledby="menu-combo-images-label"
+                      onChange={onComboImagesPick}
+                      disabled={comboBusy}
+                    />
+                  </label>
+                </div>
+                {comboFileObjectUrls.length > 0 ? (
+                  <div className="menu-combo-staged-images" aria-label="New photos to upload on save">
                     <span className="muted" style={{ fontSize: '0.8125rem' }}>
-                      Current images ({editingComboExistingImageUrls.length})
+                      New ({comboFileObjectUrls.length}) — merges with kept photos · max 6 total
                     </span>
                     <div className="menu-combo-existing-images__row">
-                      {editingComboExistingImageUrls.slice(0, 6).map((src, i) => (
-                        <img
-                          key={`${i}:${src}`}
-                          src={src}
-                          alt=""
-                          className="menu-combo-existing-images__thumb"
-                        />
+                      {comboFileObjectUrls.map((src, i) => (
+                        <span key={`staged:${i}:${String(comboImageFiles[i]?.lastModified ?? i)}`} className="menu-combo-thumb-wrap">
+                          <img src={src} alt="" className="menu-combo-existing-images__thumb" />
+                          <button
+                            type="button"
+                            className="menu-combo-thumb-remove"
+                            aria-label={`Remove new photo ${i + 1}`}
+                            disabled={comboBusy}
+                            onClick={() => removeComboDraftFileAt(i)}
+                          >
+                            <X size={14} aria-hidden strokeWidth={2.5} />
+                          </button>
+                        </span>
                       ))}
                     </div>
                   </div>
                 ) : null}
-              </label>
+                {comboSavedImagePreviewUrls.length > 0 ? (
+                  <div className="menu-combo-existing-images" aria-label="Saved combo images">
+                    <span className="muted" style={{ fontSize: '0.8125rem' }}>
+                      Saved ({comboSavedImagePreviewUrls.length})
+                    </span>
+                    <div className="menu-combo-existing-images__row">
+                      {comboSavedImagePreviewUrls.slice(0, 6).map((src, i) => (
+                        <span key={`saved:${i}:${src}`} className="menu-combo-thumb-wrap">
+                          <img src={src} alt="" className="menu-combo-existing-images__thumb" />
+                          <button
+                            type="button"
+                            className="menu-combo-thumb-remove"
+                            aria-label={`Remove saved photo ${i + 1}`}
+                            disabled={comboBusy}
+                            onClick={() => markComboStoredUrlRemoved(src)}
+                          >
+                            <X size={14} aria-hidden strokeWidth={2.5} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : isEditingCombo &&
+                  editingComboExistingImageUrls.length === 0 &&
+                  comboFileObjectUrls.length === 0 ? (
+                  <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+                    No combo photos — preview uses your items’ thumbnails.
+                  </p>
+                ) : null}
+              </div>
               <button type="submit" className="btn btn-primary" disabled={comboBusy}>
                 {comboBusy ? 'Saving…' : isEditingCombo ? 'Save changes' : 'Save combo'}
               </button>
@@ -1450,6 +1812,121 @@ export function Menu() {
       <p className="muted menu-page-back" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
+
+      {masterOverlayOpen ? (
+        <div
+          className="master-catalog-overlay"
+          role="presentation"
+          onClick={(ev) => {
+            if (ev.target === ev.currentTarget) closeMasterOverlay();
+          }}
+        >
+          <div className="master-catalog-sheet card" role="dialog" aria-modal="true" aria-labelledby="master-catalog-title">
+            <div className="master-catalog-sheet__head">
+              <div style={{ minWidth: 0 }}>
+                <h2 id="master-catalog-title" className="master-catalog-sheet__title">
+                  Master catalog
+                </h2>
+                <p className="muted master-catalog-sheet__hint" style={{ margin: '0.25rem 0 0' }}>
+                  Browse admin items and copy them into your catalog. Matches show as added.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                aria-label="Close master catalog"
+                onClick={() => closeMasterOverlay()}
+              >
+                <X size={20} strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+
+            <div className="master-catalog-sheet__scroll">
+              {masterError ? (
+                <p className="error" style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>
+                  {masterError}
+                </p>
+              ) : null}
+              {masterLoading && masterRows.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Loading master list…
+                </p>
+              ) : null}
+              {!masterLoading && masterRows.length === 0 && !masterError ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Master catalog is empty or not available yet.
+                </p>
+              ) : null}
+              <ul className="master-catalog-rows">
+                {masterRows.map((row) => {
+                  const rid = String(row?.id ?? '');
+                  const added = rid && sellerMasterProductIds.has(rid);
+                  const subBits = [];
+                  const cLab = typeof row?.cuisineCategoryName === 'string' && row.cuisineCategoryName.trim()
+                    ? row.cuisineCategoryName.trim()
+                    : '';
+                  const mLab = typeof row?.menuCategoryName === 'string' && row.menuCategoryName.trim()
+                    ? row.menuCategoryName.trim()
+                    : '';
+                  const iLab =
+                    typeof row?.itemCategoryName === 'string' && row.itemCategoryName.trim()
+                      ? row.itemCategoryName.trim()
+                      : '';
+                  if (cLab) subBits.push(cLab);
+                  if (mLab) subBits.push(mLab);
+                  if (iLab) subBits.push(iLab);
+                  const it = typeof row?.itemType === 'string' && row.itemType.trim() ? row.itemType.trim() : '';
+                  if (it) subBits.push(it);
+                  const tags = normalizeTags(row?.tags).slice(0, 6);
+                  if (tags.length) subBits.push(tags.join(' · '));
+                  const nm = typeof row?.name === 'string' && row.name.trim() ? row.name.trim() : 'Untitled';
+                  const priceDisp = Number.isFinite(Number(row?.price))
+                    ? `₹${Number(row.price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                    : '—';
+                  const rowBusy = masterBusyId === rid;
+                  return (
+                    <li key={rid}>
+                      <div className="master-catalog-row">
+                        <div className="master-catalog-row__meta">
+                          <p className="master-catalog-row__name">{nm}</p>
+                          <p className="muted master-catalog-row__sub">
+                            {[priceDisp, ...subBits].filter(Boolean).join(' · ') || ''}
+                          </p>
+                        </div>
+                        {added ? (
+                          <span className="muted" style={{ fontSize: '0.875rem', fontWeight: 700 }}>
+                            ✔ Added
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn--sm"
+                            disabled={demoReadOnly || rowBusy || !rid}
+                            onClick={() => void handleAddMasterProductToSeller(row)}
+                          >
+                            {rowBusy ? '…' : 'Add'}
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div className="master-catalog-sheet__foot">
+              <button
+                type="button"
+                className="btn btn-ghost btn--sm"
+                disabled={demoReadOnly || !masterHasMore || masterLoading || !masterCursor}
+                onClick={() => void loadMasterCatalogMore()}
+              >
+                {masterLoading && masterRows.length > 0 ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

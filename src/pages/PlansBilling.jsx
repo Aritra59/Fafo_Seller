@@ -10,10 +10,13 @@ import {
 } from '../constants/billing';
 import {
   createBillingIntent,
+  getSellerTermsDocument,
+  resolveSellerTermsDisplayContent,
   recomputeSellerSlotCount,
   subscribeBillingBySellerId,
   subscribeGlobalAppSettings,
   subscribeOrdersBySellerId,
+  updateSellerDocument,
 } from '../services/firestore';
 import {
   billingBalanceWarning,
@@ -159,6 +162,10 @@ export function PlansBilling() {
   const [amountSource, setAmountSource] = useState('preset');
   const [customRechargeDaysStr, setCustomRechargeDaysStr] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [sellerTermsDoc, setSellerTermsDoc] = useState(null);
+  const [sellerTermsLoadState, setSellerTermsLoadState] = useState('idle');
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [modalTermsAccepted, setModalTermsAccepted] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
   const [payError, setPayError] = useState('');
@@ -236,6 +243,82 @@ export function PlansBilling() {
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [reload]);
+
+  useEffect(() => {
+    if (!sellerId || demoExplore) {
+      setSellerTermsDoc(null);
+      setSellerTermsLoadState('idle');
+      return undefined;
+    }
+    let cancelled = false;
+    setSellerTermsLoadState('loading');
+    (async () => {
+      try {
+        const docRow = await getSellerTermsDocument();
+        if (!cancelled) setSellerTermsDoc(docRow ?? null);
+      } catch {
+        if (!cancelled) setSellerTermsDoc(null);
+      } finally {
+        if (!cancelled) setSellerTermsLoadState('done');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sellerId, demoExplore]);
+
+  useEffect(() => {
+    if (termsModalOpen) {
+      setModalTermsAccepted(false);
+    }
+  }, [termsModalOpen]);
+
+  /** Align checkbox with `terms/seller` vs `seller.acceptedTermsVersion` (billing gate). */
+  useEffect(() => {
+    if (demoExplore || !seller) return;
+    if (sellerTermsLoadState !== 'done') return;
+
+    const tvRaw = sellerTermsDoc?.version;
+    const termsVersionNum = typeof tvRaw === 'number' ? tvRaw : Number(tvRaw);
+    if (!(Number.isFinite(termsVersionNum) && termsVersionNum > 0)) {
+      setTermsAccepted(true);
+      return;
+    }
+
+    const avRaw = seller?.acceptedTermsVersion;
+    const acceptedNum = typeof avRaw === 'number' ? avRaw : Number(avRaw);
+
+    const aligned = Number.isFinite(acceptedNum) && acceptedNum >= termsVersionNum;
+    setTermsAccepted(aligned);
+  }, [demoExplore, seller, sellerTermsDoc, sellerTermsLoadState]);
+
+  const sellerTermsModalTitle =
+    typeof sellerTermsDoc?.title === 'string' && sellerTermsDoc.title.trim()
+      ? sellerTermsDoc.title.trim()
+      : 'FaFo billing & payments terms';
+
+  const sellerTermsModalBody = resolveSellerTermsDisplayContent(sellerTermsDoc);
+
+  async function finalizeBillingTermsAcceptance(checked) {
+    setModalTermsAccepted(Boolean(checked));
+    if (!checked) return;
+    setPayError('');
+    try {
+      if (!demoExplore && seller?.id && sellerTermsDoc) {
+        const tvRaw = sellerTermsDoc.version;
+        const termsVersionNum = typeof tvRaw === 'number' ? tvRaw : Number(tvRaw);
+        if (Number.isFinite(termsVersionNum) && termsVersionNum > 0) {
+          await updateSellerDocument(seller.id, { acceptedTermsVersion: termsVersionNum });
+          reload();
+        }
+      }
+      setTermsAccepted(true);
+      setTermsModalOpen(false);
+    } catch (e) {
+      setModalTermsAccepted(false);
+      setPayError(e?.message ?? 'Could not save terms acceptance.');
+    }
+  }
 
   const approvedFromBilling = useMemo(
     () => sumApprovedRecharge(billingRows),
@@ -789,7 +872,14 @@ export function PlansBilling() {
           <input
             type="checkbox"
             checked={termsAccepted}
-            onChange={(ev) => setTermsAccepted(ev.target.checked)}
+            onChange={(ev) => {
+              if (demoExplore) return;
+              if (ev.target.checked) {
+                setTermsModalOpen(true);
+              } else {
+                setTermsAccepted(false);
+              }
+            }}
           />
           <span>I accept the terms for plans, billing, and payments on FaFo.</span>
         </label>
@@ -854,6 +944,42 @@ export function PlansBilling() {
       <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
         <Link to="/dashboard">← Back to dashboard</Link>
       </p>
+
+      {termsModalOpen && billingViewTab === 'recharge' && !demoExplore ? (
+        <div
+          className="plans-billing-terms-modal-backdrop"
+          role="presentation"
+          onMouseDown={(ev) => {
+            if (ev.target === ev.currentTarget) setTermsModalOpen(false);
+          }}
+        >
+          <div className="plans-billing-terms-modal card stack" role="dialog" aria-modal="true">
+            <h2 id="plans-billing-terms-title" style={{ margin: 0 }}>
+              {sellerTermsModalTitle}
+            </h2>
+            <div className="plans-billing-terms-modal-scroll stack">
+              {sellerTermsModalBody ? (
+                <pre className="plans-billing-terms-modal-pre">{sellerTermsModalBody}</pre>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  Terms document is maintained by FaFo admins (Firestore <code className="plans-billing-code">terms/seller</code>). If this is blank, accept only after content is published.
+                </p>
+              )}
+            </div>
+            <label className="plans-billing-terms-label">
+              <input
+                type="checkbox"
+                checked={modalTermsAccepted}
+                onChange={(ev) => void finalizeBillingTermsAcceptance(ev.target.checked)}
+              />
+              <span>I have read and accept these terms.</span>
+            </label>
+            <button type="button" className="btn btn-ghost" onClick={() => setTermsModalOpen(false)}>
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { isDemoExplorer } from '../constants/demoMode';
@@ -8,21 +9,34 @@ import {
   deleteProduct,
   filterGlobalMenuCategoriesByCuisine,
   getProductForSeller,
+  maybeSyncSellerNewProductToMaster,
+  normalizeProductNameForMatch,
   recomputeSellerSlotCount,
   subscribeGlobalCuisineCategories,
+  subscribeGlobalItemCategories,
   subscribeGlobalMenuCategories,
+  subscribeGlobalTags,
   updateProduct,
 } from '../services/firestore';
 import { listMenuGroups, syncMenuGroupAfterProductSave } from '../services/menuGroupsService';
 import {
   compressImageToJpegBlob,
+  deleteProductStoredImage,
   isAcceptedImageType,
   uploadProductImageJpeg,
 } from '../services/storage';
 
-function tagsFromInput(text) {
-  if (typeof text !== 'string' || !text.trim()) return [];
-  return [...new Set(text.split(',').map((t) => t.trim()).filter(Boolean))];
+function normalizeTagsArr(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map((t) => String(t).trim()).filter(Boolean);
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function productDisplayName(p) {
@@ -40,12 +54,17 @@ export function AddItem() {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [cuisineCategory, setCuisineCategory] = useState('');
   const [price, setPrice] = useState('');
   const [prepTime, setPrepTime] = useState('');
   const [quantity, setQuantity] = useState(0);
 
-  const [tagsInput, setTagsInput] = useState('');
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [globalTags, setGlobalTags] = useState([]);
+  const [globalItemCategories, setGlobalItemCategories] = useState([]);
+  const [globalTagsLoad, setGlobalTagsLoad] = useState('loading');
+  const [itemCategoriesLoad, setItemCategoriesLoad] = useState('loading');
+  const [itemCategorySelId, setItemCategorySelId] = useState('');
+  const [storedMasterProductId, setStoredMasterProductId] = useState('');
   const [menuGroupIds, setMenuGroupIds] = useState([]);
   const [initialMenuGroupIds, setInitialMenuGroupIds] = useState([]);
   const [menuGroups, setMenuGroups] = useState([]);
@@ -57,6 +76,7 @@ export function AddItem() {
   const [menuCategoryId, setMenuCategoryId] = useState('');
   const [legacyCuisineName, setLegacyCuisineName] = useState('');
   const [legacyMenuName, setLegacyMenuName] = useState('');
+  const [legacyItemCategoryName, setLegacyItemCategoryName] = useState('');
   const [editCategoriesHydrated, setEditCategoriesHydrated] = useState(false);
   const [discountLabel, setDiscountLabel] = useState('');
   const [discountPercent, setDiscountPercent] = useState('');
@@ -69,6 +89,8 @@ export function AddItem() {
   const [pendingImage, setPendingImage] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [existingImageUrl, setExistingImageUrl] = useState('');
+  /** Edit mode only: saved image cleared on next successful save (unless a new file is chosen). */
+  const [stripImageOnSave, setStripImageOnSave] = useState(false);
   const [imageUploadPct, setImageUploadPct] = useState(0);
   const imagePreviewRevoke = useRef(null);
 
@@ -127,9 +149,47 @@ export function AddItem() {
     );
   }, []);
 
+  useEffect(() => {
+    setGlobalTagsLoad('loading');
+    return subscribeGlobalTags(
+      (rows) => {
+        setGlobalTags(rows);
+        setGlobalTagsLoad('ready');
+      },
+      () => {
+        setGlobalTags([]);
+        setGlobalTagsLoad('error');
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    setItemCategoriesLoad('loading');
+    return subscribeGlobalItemCategories(
+      (rows) => {
+        setGlobalItemCategories(rows);
+        setItemCategoriesLoad('ready');
+      },
+      () => {
+        setGlobalItemCategories([]);
+        setItemCategoriesLoad('error');
+      },
+    );
+  }, []);
+
   const activeGlobalCuisines = useMemo(
     () => globalCuisines.filter((c) => c.active !== false),
     [globalCuisines],
+  );
+
+  const activeGlobalTags = useMemo(
+    () => globalTags.filter((t) => t.active !== false && t.name),
+    [globalTags],
+  );
+
+  const activeGlobalItemCategories = useMemo(
+    () => globalItemCategories.filter((t) => t.active !== false && t.name),
+    [globalItemCategories],
   );
 
   const selectedCuisineName = useMemo(() => {
@@ -198,6 +258,9 @@ export function AddItem() {
       setEditCategoriesHydrated(false);
       setLegacyCuisineName('');
       setLegacyMenuName('');
+      setLegacyItemCategoryName('');
+      setItemCategorySelId('');
+      setStripImageOnSave(false);
       return undefined;
     }
     if (!seller?.id) {
@@ -238,8 +301,13 @@ export function AddItem() {
         const q = Number(p.quantity);
         setQuantity(Number.isFinite(q) ? Math.max(0, Math.floor(q)) : 0);
 
-        const tags = Array.isArray(p.tags) ? p.tags : [];
-        setTagsInput(tags.length ? tags.join(', ') : '');
+        setSelectedTags(normalizeTagsArr(p.tags));
+
+        setItemCategorySelId(String(p.itemCategoryId ?? '').trim());
+        setLegacyItemCategoryName(String(p.itemCategoryName ?? p.itemCategory ?? '').trim());
+
+        const mp = String(p.masterProductId ?? '').trim();
+        setStoredMasterProductId(mp);
 
         const dl = p.discountLabel;
         setDiscountLabel(typeof dl === 'string' ? dl : '');
@@ -255,6 +323,7 @@ export function AddItem() {
               ? p.image.trim()
               : '';
         setExistingImageUrl(img);
+        setStripImageOnSave(false);
 
         const rawMg = p.menuGroupIds;
         let mgIds = [];
@@ -295,6 +364,14 @@ export function AddItem() {
     setMenuGroupIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]));
   }
 
+  function toggleTagChip(tagLabel) {
+    const t = String(tagLabel ?? '').trim();
+    if (!t) return;
+    setSelectedTags((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    );
+  }
+
   function clearPendingImage() {
     if (imagePreviewRevoke.current) {
       URL.revokeObjectURL(imagePreviewRevoke.current);
@@ -305,6 +382,12 @@ export function AddItem() {
     setImageUploadPct(0);
   }
 
+  /** ✕ on the preview — drops unsaved selection or marks saved photo cleared on Save in edit mode. */
+  function dismissPhotoFromOverlay() {
+    if (pendingPreviewUrl) clearPendingImage();
+    else setStripImageOnSave(true);
+  }
+
   function onProductImage(ev) {
     const file = ev.target.files?.[0];
     ev.target.value = '';
@@ -313,6 +396,7 @@ export function AddItem() {
       showToast('Use JPG, PNG, or WebP.', 'error');
       return;
     }
+    setStripImageOnSave(false);
     if (imagePreviewRevoke.current) {
       URL.revokeObjectURL(imagePreviewRevoke.current);
     }
@@ -321,6 +405,8 @@ export function AddItem() {
     setPendingPreviewUrl(url);
     setPendingImage(file);
   }
+
+  const showSavedImagePreview = Boolean(existingImageUrl && !stripImageOnSave);
 
   function buildBasePayload() {
     const cRow =
@@ -340,7 +426,18 @@ export function AddItem() {
     if (!mRow?.name) {
       throw new Error('Select a menu category from the admin list.');
     }
-    return {
+    const icRow =
+      activeGlobalItemCategories.find((c) => c.id === itemCategorySelId) ||
+      globalItemCategories.find((c) => c.id === itemCategorySelId);
+    if (!itemCategorySelId.trim() || !icRow?.name) {
+      throw new Error('Select an item type / category from the admin list.');
+    }
+    const icName = String(icRow.name).trim();
+    const derivedItemType =
+      typeof icRow.itemType === 'string' && icRow.itemType.trim()
+        ? icRow.itemType.trim()
+        : icName;
+    const base = {
       name,
       description,
       cuisineCategory: cRow.name,
@@ -349,17 +446,27 @@ export function AddItem() {
       menuCategory: mRow.name,
       menuCategoryId: mRow.id,
       menuCategoryName: mRow.name,
-      itemCategory: '',
+      itemCategory: icName,
+      itemCategoryId: icRow.id,
+      itemCategoryName: icName,
       price,
       prepTime,
       quantity,
       available: true,
-      tags: tagsFromInput(tagsInput),
+      tags: [...selectedTags].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' }),
+      ),
+      itemType: derivedItemType,
+      masterProductId: storedMasterProductId.trim() ? storedMasterProductId.trim() : null,
       discountLabel,
       discountPercent,
       menuGroupIds: [...menuGroupIds],
       menuGroupId: menuGroupIds.length ? menuGroupIds[0] : null,
     };
+    if (isEdit) {
+      base.customized = true;
+    }
+    return base;
   }
 
   async function handleSubmit(e) {
@@ -372,8 +479,8 @@ export function AddItem() {
       const base = buildBasePayload();
       const nextMenus = [...menuGroupIds];
       if (isEdit) {
-        await updateProduct(productId, seller.id, base);
         if (pendingImage) {
+          await updateProduct(productId, seller.id, base);
           const blob = await compressImageToJpegBlob(pendingImage);
           const url = await uploadProductImageJpeg(
             seller.id,
@@ -384,6 +491,14 @@ export function AddItem() {
           await updateProduct(productId, seller.id, { ...base, imageUrl: url });
           setExistingImageUrl(url);
           clearPendingImage();
+          setStripImageOnSave(false);
+        } else if (stripImageOnSave) {
+          await updateProduct(productId, seller.id, { ...base, imageUrl: null });
+          await deleteProductStoredImage(seller.id, productId);
+          setExistingImageUrl('');
+          setStripImageOnSave(false);
+        } else {
+          await updateProduct(productId, seller.id, base);
         }
         await syncMenuGroupAfterProductSave(seller.id, productId, nextMenus, initialMenuGroupIds);
         setInitialMenuGroupIds(nextMenus);
@@ -399,6 +514,10 @@ export function AddItem() {
         await syncMenuGroupAfterProductSave(seller.id, newId, nextMenus, []);
         setInitialMenuGroupIds(nextMenus);
         showToast('Item created.');
+        void maybeSyncSellerNewProductToMaster({
+          ...base,
+          normalizedName: normalizeProductNameForMatch(base.name),
+        });
       }
       recomputeSellerSlotCount(seller.id).catch(() => {});
       setTimeout(() => navigate('/menu', { replace: true }), 450);
@@ -517,29 +636,47 @@ export function AddItem() {
             Item photo
           </span>
           <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
-            JPG, PNG, or WebP — compressed and uploaded after save (max ~1200px).
+            JPG, PNG, or WebP — compressed after save (max ~1200px). Optional — use Replace photo or ✕ on
+            the thumbnail.
           </p>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-            className="input"
-            aria-labelledby="add-img-label"
-            onChange={onProductImage}
-            disabled={submitting}
-          />
-          {pendingPreviewUrl ? (
-            <img
-              className="add-item-image-preview"
-              src={pendingPreviewUrl}
-              alt="Selected preview"
-            />
-          ) : existingImageUrl ? (
-            <img
-              className="add-item-image-preview"
-              src={existingImageUrl}
-              alt="Current item"
-              loading="lazy"
-            />
+          <div className="add-item-image-toolbar">
+            <label className="btn btn-ghost btn--sm add-item-image-file-label">
+              {pendingPreviewUrl || showSavedImagePreview ? 'Replace photo' : 'Choose photo'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                className="sr-only"
+                aria-labelledby="add-img-label"
+                onChange={onProductImage}
+                disabled={submitting}
+              />
+            </label>
+          </div>
+          {!pendingPreviewUrl && !showSavedImagePreview ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.8125rem' }}>
+              No photo — customers will see your item without an image.
+            </p>
+          ) : null}
+          {pendingPreviewUrl || showSavedImagePreview ? (
+            <div className="add-item-image-preview-shell">
+              <div className="add-item-image-preview-frame">
+                <img
+                  className="add-item-image-preview"
+                  src={pendingPreviewUrl || existingImageUrl}
+                  alt=""
+                  loading={pendingPreviewUrl ? 'eager' : 'lazy'}
+                />
+                <button
+                  type="button"
+                  className="add-item-image-remove-x"
+                  aria-label={pendingPreviewUrl ? 'Remove selected photo' : 'Remove saved photo'}
+                  disabled={submitting}
+                  onClick={dismissPhotoFromOverlay}
+                >
+                  <X size={14} aria-hidden strokeWidth={2.5} />
+                </button>
+              </div>
+            </div>
           ) : null}
           {submitting && pendingImage ? (
             <div className="upload-progress" aria-hidden>
@@ -664,6 +801,47 @@ export function AddItem() {
           </p>
         </div>
 
+        <div className="add-item-field add-item-field--select">
+          <label className="label" htmlFor="add-item-category">
+            Item type / category
+          </label>
+          {itemCategoriesLoad === 'loading' ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Loading item categories…
+            </p>
+          ) : null}
+          {itemCategoriesLoad === 'error' ? (
+            <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Could not load item categories.
+            </p>
+          ) : null}
+          <select
+            id="add-item-category"
+            className="input"
+            value={itemCategorySelId}
+            onChange={(e) => setItemCategorySelId(e.target.value)}
+            required
+            disabled={itemCategoriesLoad !== 'ready' || activeGlobalItemCategories.length === 0}
+          >
+            <option value="">Select item category</option>
+            {activeGlobalItemCategories.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+            {isEdit &&
+            itemCategorySelId &&
+            !activeGlobalItemCategories.some((c) => c.id === itemCategorySelId) ? (
+              <option value={itemCategorySelId}>
+                {legacyItemCategoryName || 'Saved item category'} (saved)
+              </option>
+            ) : null}
+          </select>
+          <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem' }}>
+            From admin itemCategories — used for menu headings and grouping.
+          </p>
+        </div>
+
         <div className="add-item-field">
           <span className="label" id="add-menu-groups-label">
             Menu assignment
@@ -751,26 +929,39 @@ export function AddItem() {
         </div>
 
         <div className="add-item-field">
-          <span className="label" id="add-qty-label">
-            Quantity
-          </span>
+          <label className="label" id="add-qty-label" htmlFor="add-qty">
+            Availability
+          </label>
           <div className="add-item-qty-row" role="group" aria-labelledby="add-qty-label">
             <button
               type="button"
               className="btn btn-ghost add-item-qty-btn"
               onClick={decrementQty}
-              aria-label="Deduct quantity"
+              aria-label="Deduct availability"
             >
               Deduct
             </button>
-            <span className="add-item-qty-value" aria-live="polite">
-              {quantity}
-            </span>
+            <input
+              id="add-qty"
+              className="input add-item-qty-value"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              aria-valuenow={quantity}
+              aria-label="Availability count"
+              value={quantity}
+              onChange={(e) => {
+                const v = String(e.target.value).replace(/\D/g, '');
+                const n = v === '' ? 0 : Number.parseInt(v, 10);
+                setQuantity(Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0);
+              }}
+            />
             <button
               type="button"
               className="btn btn-ghost add-item-qty-btn"
               onClick={incrementQty}
-              aria-label="Add quantity"
+              aria-label="Add availability"
             >
               ADD
             </button>
@@ -778,18 +969,46 @@ export function AddItem() {
         </div>
 
         <div className="add-item-field">
-          <label className="label" htmlFor="add-tags">
+          <span className="label" id="add-tags-label">
             Tags (optional)
-          </label>
-          <input
-            id="add-tags"
-            className="input"
-            type="text"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-            placeholder="Comma-separated, e.g. spicy, bestseller"
-            autoComplete="off"
-          />
+          </span>
+          {globalTagsLoad === 'loading' ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Loading tags…
+            </p>
+          ) : null}
+          {globalTagsLoad === 'error' ? (
+            <p className="error" style={{ margin: 0, fontSize: '0.875rem' }}>
+              Could not load tags.
+            </p>
+          ) : null}
+          {globalTagsLoad === 'ready' && activeGlobalTags.length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.875rem' }}>
+              No tags from admin yet.
+            </p>
+          ) : null}
+          <div className="add-item-tag-chip-wrap" role="group" aria-labelledby="add-tags-label">
+            {activeGlobalTags.map((t) => {
+              const selected = selectedTags.includes(t.name);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`add-item-tag-chip${selected ? ' is-selected' : ''}`}
+                  aria-pressed={selected}
+                  onClick={() => toggleTagChip(t.name)}
+                >
+                  {t.name}
+                </button>
+              );
+            })}
+          </div>
+          {selectedTags.some((x) => !activeGlobalTags.some((t) => t.name === x)) ? (
+            <p className="muted" style={{ margin: '0.35rem 0 0', fontSize: '0.8125rem' }}>
+              Saved tags not in the current admin list are kept on this item; choose chips to add or remove
+              listed tags.
+            </p>
+          ) : null}
         </div>
 
         {submitError ? <p className="error add-item-error">{submitError}</p> : null}

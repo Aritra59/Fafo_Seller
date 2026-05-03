@@ -10,6 +10,7 @@ import { X } from 'lucide-react';
 import { SellerPageTitleProvider } from '../context/SellerPageTitleContext';
 import { NomadLogo } from './NomadLogo';
 import { PwaInstallBanner } from './PwaInstallBanner';
+import { SellerTermsGate } from './SellerTermsGate';
 import { SellerTopbar } from './SellerTopbar';
 
 const DRAWER_LINKS = [
@@ -176,9 +177,11 @@ export function Layout() {
 
         <main className="app-main app-main--seller">
           {(user || hasSellerCodeSession()) && !isLanding && !demoExplore ? <PwaInstallBanner /> : null}
-          <div className="app-main__scroll">
-            <Outlet />
-          </div>
+          <SellerTermsGate>
+            <div className="app-main__scroll">
+              <Outlet />
+            </div>
+          </SellerTermsGate>
         </main>
       </div>
     </SellerPageTitleProvider>

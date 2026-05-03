@@ -1,4 +1,4 @@
-import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { storage } from '../firebase';
 
 export const SHOP_LOGO_PATH = (sellerId) => `shops/${sellerId}/shop.jpg`;
@@ -113,6 +113,18 @@ export async function uploadShopLogoJpeg(sellerId, jpegBlob, onProgress) {
   return trackTask(task, onProgress);
 }
 
+/** Best-effort delete `shops/{sellerId}/shop.jpg` (ignores missing object). */
+export async function deleteShopLogoStored(sellerId) {
+  const sid = String(sellerId ?? '').trim();
+  if (!sid) return;
+  try {
+    await deleteObject(ref(storage, SHOP_LOGO_PATH(sid)));
+  } catch (e) {
+    if (e?.code === 'storage/object-not-found') return;
+    throw e;
+  }
+}
+
 /**
  * Upload product image (overwrites `products/{sellerId}/{productId}.jpg`).
  * @param {string} sellerId
@@ -130,6 +142,48 @@ export async function uploadProductImageJpeg(sellerId, productId, jpegBlob, onPr
   const r = ref(storage, PRODUCT_IMAGE_PATH(sid, pid));
   const task = uploadBytesResumable(r, jpegBlob, { contentType: 'image/jpeg' });
   return trackTask(task, onProgress);
+}
+
+/** Best-effort delete `products/{sellerId}/{productId}.jpg` (ignores missing object). */
+/**
+ * Path segment from a Firebase HTTPS download URL (`.../v0/b/…/o/{encoded}?...`).
+ * Compatible with Firebase JS SDK modular (no `refFromURL` in bundle).
+ */
+function storageEncodedPathFromDownloadUrl(downloadUrl) {
+  try {
+    const full = String(downloadUrl ?? '').trim();
+    if (!full.includes('firebasestorage.googleapis.com')) return '';
+    const u = new URL(full);
+    const seg = u.pathname.split('/o/')[1];
+    if (!seg) return '';
+    return decodeURIComponent(seg.split('?')[0].replace(/\+/g, ' '));
+  } catch {
+    return '';
+  }
+}
+
+/** Remove one object given its HTTPS download URL. Ignores missing / unparseable URLs. */
+export async function deleteStorageObjectByDownloadUrl(downloadUrl) {
+  const path = storageEncodedPathFromDownloadUrl(downloadUrl);
+  if (!path) return;
+  try {
+    await deleteObject(ref(storage, path));
+  } catch (e) {
+    if (e?.code === 'storage/object-not-found') return;
+    throw e;
+  }
+}
+
+export async function deleteProductStoredImage(sellerId, productId) {
+  const sid = String(sellerId ?? '').trim();
+  const pid = String(productId ?? '').trim();
+  if (!sid || !pid) return;
+  try {
+    await deleteObject(ref(storage, PRODUCT_IMAGE_PATH(sid, pid)));
+  } catch (e) {
+    if (e?.code === 'storage/object-not-found') return;
+    throw e;
+  }
 }
 
 export const COMBO_IMAGE_PATH = (sellerId, comboId) => `combos/${sellerId}/${comboId}.jpg`;
@@ -159,6 +213,30 @@ export async function uploadComboImageJpegAt(sellerId, comboId, index, jpegBlob,
   const r = ref(storage, COMBO_IMAGE_PATH_AT(sid, cid, i));
   const task = uploadBytesResumable(r, jpegBlob, { contentType: 'image/jpeg' });
   return trackTask(task, onProgress);
+}
+
+/**
+ * Deletes main + indexed combo JPEGs (`combos/{sellerId}/{comboId}.jpg` and `_0`…`_maxExtra`).
+ * Ignores missing objects so it is safe after partial uploads.
+ */
+export async function deleteComboStoredImageSlots(sellerId, comboId, maxExtraIndex = 5) {
+  const sid = String(sellerId ?? '').trim();
+  const cid = String(comboId ?? '').trim();
+  if (!sid || !cid) return;
+  const paths = [COMBO_IMAGE_PATH(sid, cid)];
+  for (let i = 0; i <= maxExtraIndex; i++) {
+    paths.push(COMBO_IMAGE_PATH_AT(sid, cid, i));
+  }
+  await Promise.all(
+    paths.map(async (p) => {
+      try {
+        await deleteObject(ref(storage, p));
+      } catch (e) {
+        if (e?.code === 'storage/object-not-found') return;
+        throw e;
+      }
+    }),
+  );
 }
 
 export const UPI_QR_STORAGE_PATH = (sellerId) => `shops/${sellerId}/upi-qr.jpg`;

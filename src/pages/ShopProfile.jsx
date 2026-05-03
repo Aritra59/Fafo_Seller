@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Pencil } from 'lucide-react';
+import { ImagePlus, Pencil, X } from 'lucide-react';
 import { isDemoExplorer } from '../constants/demoMode';
 import { useSeller } from '../hooks/useSeller';
 import { useSimpleToast } from '../hooks/useSimpleToast';
@@ -10,6 +10,7 @@ import {
 } from '../services/firestore';
 import {
   compressImageToJpegBlob,
+  deleteShopLogoStored,
   isAcceptedImageType,
   uploadShopLogoJpeg,
 } from '../services/storage';
@@ -63,7 +64,9 @@ export function ShopProfile() {
   const [pendingLogo, setPendingLogo] = useState(null);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
   const [logoUploadPct, setLogoUploadPct] = useState(0);
+  const [logoRemoved, setLogoRemoved] = useState(false);
   const logoPreviewRevoke = useRef(null);
+  const logoFileInputRef = useRef(null);
 
   const [shopName, setShopName] = useState('');
   const [ownerName, setOwnerName] = useState('');
@@ -139,11 +142,24 @@ export function ShopProfile() {
     setLogoUploadPct(0);
   }
 
+  function openLogoFilePicker() {
+    logoFileInputRef.current?.click();
+  }
+
+  function handleRemoveLogoFromForm() {
+    if (pendingLogo || logoPreviewUrl) {
+      clearLogoPick();
+      return;
+    }
+    setLogoRemoved(true);
+  }
+
   function beginEdit() {
     if (isDemoExplorer()) return;
     if (!seller) return;
     setFormError('');
     clearLogoPick();
+    setLogoRemoved(false);
     const c = locationToCoords(seller);
     setShopName(seller.shopName ?? '');
     setOwnerName(seller.ownerName ?? '');
@@ -166,6 +182,7 @@ export function ShopProfile() {
     setEditing(false);
     setFormError('');
     clearLogoPick();
+    setLogoRemoved(false);
   }
 
   function onLogoFile(ev) {
@@ -183,6 +200,7 @@ export function ShopProfile() {
     logoPreviewRevoke.current = url;
     setLogoPreviewUrl(url);
     setPendingLogo(file);
+    setLogoRemoved(false);
   }
 
   async function handleSave(e) {
@@ -226,13 +244,25 @@ export function ShopProfile() {
       if (nextOpen !== null) {
         updates.shopOpenNow = nextOpen;
       }
+      const hadStoredLogo =
+        typeof seller.imageUrl === 'string' && seller.imageUrl.trim().length > 0;
       if (pendingLogo) {
         const blob = await compressImageToJpegBlob(pendingLogo);
         const url = await uploadShopLogoJpeg(seller.id, blob, setLogoUploadPct);
         updates.imageUrl = url;
+      } else if (logoRemoved && hadStoredLogo) {
+        updates.imageUrl = null;
       }
       await updateSellerDocument(seller.id, updates);
+      if (!pendingLogo && logoRemoved && hadStoredLogo) {
+        try {
+          await deleteShopLogoStored(seller.id);
+        } catch {
+          /* Firestore already cleared URL; stale object is overwritten on next upload */
+        }
+      }
       clearLogoPick();
+      setLogoRemoved(false);
       setEditing(false);
       reload();
       showToast('Profile saved.');
@@ -425,6 +455,8 @@ export function ShopProfile() {
               JPG, PNG, or WebP — max ~1200px, compressed before upload.
             </p>
             <input
+              ref={logoFileInputRef}
+              id="shop-profile-logo-input"
               type="file"
               accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
               className="input"
@@ -432,21 +464,78 @@ export function ShopProfile() {
               disabled={saveBusy}
             />
             {logoPreviewUrl ? (
-              <img
-                className="image-upload-preview"
-                style={{ marginTop: '0.65rem' }}
-                src={logoPreviewUrl}
-                alt="Logo preview"
-              />
-            ) : typeof seller.imageUrl === 'string' && seller.imageUrl.trim() ? (
-              <img
-                className="image-upload-preview"
-                style={{ marginTop: '0.65rem' }}
-                src={seller.imageUrl.trim()}
-                alt="Current logo"
-                loading="lazy"
-              />
-            ) : null}
+              <div className="shop-profile-logo-edit-frame">
+                <img
+                  className="image-upload-preview"
+                  src={logoPreviewUrl}
+                  alt="Logo preview"
+                />
+                <button
+                  type="button"
+                  className="add-item-image-remove-x"
+                  onClick={handleRemoveLogoFromForm}
+                  disabled={saveBusy}
+                  aria-label="Remove selected logo"
+                >
+                  <X size={15} strokeWidth={2.5} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="shop-profile-logo-replace"
+                  onClick={openLogoFilePicker}
+                  disabled={saveBusy}
+                  aria-label="Replace logo"
+                >
+                  <ImagePlus size={14} strokeWidth={2.25} aria-hidden />
+                  <span>Replace</span>
+                </button>
+              </div>
+            ) : typeof seller.imageUrl === 'string' &&
+              seller.imageUrl.trim() &&
+              !logoRemoved ? (
+              <div className="shop-profile-logo-edit-frame">
+                <img
+                  className="image-upload-preview"
+                  src={seller.imageUrl.trim()}
+                  alt="Current logo"
+                  loading="lazy"
+                />
+                <button
+                  type="button"
+                  className="add-item-image-remove-x"
+                  onClick={handleRemoveLogoFromForm}
+                  disabled={saveBusy}
+                  aria-label="Remove shop logo"
+                >
+                  <X size={15} strokeWidth={2.5} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="shop-profile-logo-replace"
+                  onClick={openLogoFilePicker}
+                  disabled={saveBusy}
+                  aria-label="Replace logo"
+                >
+                  <ImagePlus size={14} strokeWidth={2.25} aria-hidden />
+                  <span>Replace</span>
+                </button>
+              </div>
+            ) : (
+              <div className="shop-profile-logo-empty" style={{ marginTop: '0.65rem' }}>
+                <p className="muted" style={{ margin: '0 0 0.5rem', fontSize: '0.8125rem' }}>
+                  No logo set. Choose a file above or add one now.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn--sm"
+                  onClick={openLogoFilePicker}
+                  disabled={saveBusy}
+                >
+                  <ImagePlus size={16} strokeWidth={2.1} aria-hidden style={{ marginRight: 6 }} />
+                  Choose logo
+                </button>
+              </div>
+            )}
             {saveBusy && pendingLogo ? (
               <div className="upload-progress" style={{ marginTop: '0.5rem' }} aria-hidden>
                 <div
