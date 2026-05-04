@@ -1,4 +1,5 @@
 import { resolveMenuDays } from '../utils/menuSchedule';
+import { getShopUrl } from '../utils/url';
 
 /** Session flag set from Home → "Explore (demo mode)". */
 const DEMO_KEY = 'fafo_demo';
@@ -23,9 +24,8 @@ export const DEMO_SELLER = {
   trialEnd,
   shopCode: 'DEMO01',
   shopSlug: 'demo-street-kitchen',
-  shopUrl: 'https://fafo-buyer.vercel.app/shop/DEMO01',
-  publicShopUrl: 'https://fafo-buyer.vercel.app/shop/DEMO01',
-  qrUrl: '',
+  shopUrl: getShopUrl('DEMO01'),
+  publicShopUrl: getShopUrl('DEMO01'),
   imageUrl: '',
   openingTime: '09:00',
   closingTime: '22:00',

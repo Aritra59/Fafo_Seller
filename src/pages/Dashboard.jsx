@@ -28,7 +28,7 @@ import {
 } from '../services/sellerHelpers';
 import { pickScheduledMenu } from '../utils/menuSchedule';
 import { normalizeShopCode } from '../utils/shopCode';
-import { publicShopByCodeUrl, publicShopQrTargetUrl, publicShopShareUrl } from '../utils/publicShopUrl';
+import { getBaseUrl, getPublicShopUrl } from '../utils/url';
 
 function normalizeOrderStatus(status) {
   return String(status ?? '').trim().toLowerCase();
@@ -152,17 +152,23 @@ export function Dashboard() {
     () => normalizeShopCode(seller?.shopCode ?? seller?.code ?? ''),
     [seller?.shopCode, seller?.code],
   );
-  const shareLink = useMemo(() => (shopCodeNorm ? publicShopShareUrl(shopCodeNorm) : ''), [shopCodeNorm]);
+  const publicIdentifier = useMemo(
+    () => String(seller?.shopSlug ?? '').trim() || shopCodeNorm,
+    [seller?.shopSlug, shopCodeNorm],
+  );
+  const baseUrl = getBaseUrl();
+  const publicShopUrl = useMemo(() => getPublicShopUrl(seller), [seller, baseUrl]);
+  const shareLink = publicShopUrl;
 
   useEffect(() => {
-    if (shareModal !== 'qr' || !shopCodeNorm) {
+    if (shareModal !== 'qr' || !publicShopUrl) {
       setQrDataUrl('');
       return undefined;
     }
     let cancelled = false;
     (async () => {
       try {
-        const url = await QRCode.toDataURL(publicShopQrTargetUrl(shopCodeNorm), {
+        const url = await QRCode.toDataURL(publicShopUrl, {
           margin: 2,
           width: 280,
           color: { dark: '#0c0e12ff', light: '#ffffffff' },
@@ -175,7 +181,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [shareModal, shopCodeNorm]);
+  }, [shareModal, publicShopUrl, baseUrl]);
 
   const scheduledMenuNow = useMemo(
     () => pickScheduledMenu(menuGroupRows, new Date(clockTick)),
@@ -533,14 +539,14 @@ export function Dashboard() {
         </button>
       </section>
 
-      {!demoExplore && shopCodeNorm ? (
+      {!demoExplore && publicIdentifier ? (
         <section className="dashboard-share card" aria-label="Share your shop">
           <h2 className="dashboard-v2-section-title" style={{ marginTop: 0 }}>
             Share menu
           </h2>
           <div className="dashboard-share__row">
             <a
-              href={publicShopByCodeUrl(shopCodeNorm)}
+              href={publicShopUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary dashboard-share__btn"
@@ -768,7 +774,7 @@ export function Dashboard() {
               </p>
             )}
             <p className="muted" style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', wordBreak: 'break-all' }}>
-              {publicShopByCodeUrl(shopCodeNorm)}
+              {publicShopUrl}
             </p>
           </div>
         </div>

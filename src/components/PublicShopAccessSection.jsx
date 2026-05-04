@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { isDemoExplorer } from '../constants/demoMode';
 import { logShopVisit } from '../services/firestore';
 import { normalizeShopCode } from '../utils/shopCode';
-import { publicShopByCodeUrl, publicShopQrTargetUrl, publicShopShareUrl } from '../utils/publicShopUrl';
+import { getBaseUrl, getPublicShopUrl } from '../utils/url';
 import { buildPublicShopQrPngBlob, downloadPublicShopQrPng } from '../utils/shopQr';
 
 /**
@@ -13,21 +14,18 @@ import { buildPublicShopQrPngBlob, downloadPublicShopQrPng } from '../utils/shop
  */
 export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = false }) {
   const [copyMsg, setCopyMsg] = useState('');
+  const [qrPreviewDataUrl, setQrPreviewDataUrl] = useState('');
 
   const code = useMemo(
     () => (seller ? normalizeShopCode(seller.shopCode ?? seller.code ?? '') : ''),
     [seller],
   );
-  const linkByCode = useMemo(() => (code ? publicShopByCodeUrl(code) : ''), [code]);
-  const shareUrl = useMemo(() => (code ? publicShopShareUrl(code) : ''), [code]);
-  const qrUrlString = useMemo(
-    () => (code ? publicShopQrTargetUrl(code) : ''),
-    [code],
-  );
-  const storedQr = useMemo(
-    () => (typeof seller?.qrUrl === 'string' && seller.qrUrl.trim() ? seller.qrUrl.trim() : ''),
-    [seller?.qrUrl],
-  );
+  const slug = useMemo(() => String(seller?.shopSlug ?? '').trim(), [seller?.shopSlug]);
+  const publicIdentifier = slug || code;
+  const baseUrl = getBaseUrl();
+  const publicShopUrl = useMemo(() => getPublicShopUrl(seller), [seller, baseUrl]);
+  const shareUrl = publicShopUrl;
+  const qrUrlString = publicShopUrl;
 
   const shopName = useMemo(
     () => (typeof seller?.shopName === 'string' && seller.shopName.trim() ? seller.shopName.trim() : 'our shop'),
@@ -45,14 +43,37 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
     }
   }, []);
 
+  useEffect(() => {
+    if (!qrUrlString) {
+      setQrPreviewDataUrl('');
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const dataUrl = await QRCode.toDataURL(qrUrlString, {
+          margin: 2,
+          width: 280,
+          color: { dark: '#0c0e12ff', light: '#ffffffff' },
+        });
+        if (!cancelled) setQrPreviewDataUrl(dataUrl);
+      } catch {
+        if (!cancelled) setQrPreviewDataUrl('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrUrlString]);
+
   const onDownloadQr = useCallback(() => {
-    if (!code || !qrUrlString) return;
-    const safe = `fafo-shop-qr-${code.toLowerCase()}.png`;
+    if (!publicIdentifier || !qrUrlString) return;
+    const safe = `fafo-shop-qr-${publicIdentifier.toLowerCase()}.png`;
     void downloadPublicShopQrPng(qrUrlString, safe);
-  }, [code, qrUrlString]);
+  }, [publicIdentifier, qrUrlString]);
 
   const onPrintQr = useCallback(() => {
-    if (!storedQr) {
+    if (!qrPreviewDataUrl) {
       onDownloadQr();
       return;
     }
@@ -62,22 +83,21 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       return;
     }
     w.document.write(
-      `<!doctype html><html><head><title>Print QR</title><style>body{margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;}img{max-width:100vmin;}</style></head><body><img src="${storedQr}" alt="Shop QR" onload="setTimeout(function(){print();},300)" /></body></html>`,
+      `<!doctype html><html><head><title>Print QR</title><style>body{margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;}img{max-width:100vmin;}</style></head><body><img src="${qrPreviewDataUrl}" alt="Shop QR" onload="setTimeout(function(){print();},300)" /></body></html>`,
     );
     w.document.close();
-  }, [storedQr, onDownloadQr]);
+  }, [qrPreviewDataUrl, onDownloadQr]);
 
   const onPreview = useCallback(() => {
-    if (!code) return;
-    const url = publicShopByCodeUrl(code);
-    if (!url) return;
+    if (!publicIdentifier) return;
+    const url = `${getBaseUrl()}/s/${encodeURIComponent(publicIdentifier)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
     const id = String(sid ?? '').trim();
     if (id && !isDemoExplorer()) {
       const dev = typeof navigator !== 'undefined' ? navigator.userAgent : '';
       void logShopVisit({ sellerId: id, source: 'link', device: dev, path: 'settings_preview' });
     }
-  }, [code, sid]);
+  }, [publicIdentifier, sid]);
 
   const onShareWhatsapp = useCallback(async () => {
     const id = String(sid ?? '').trim();
@@ -85,12 +105,12 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       const dev = typeof navigator !== 'undefined' ? navigator.userAgent : '';
       void logShopVisit({ sellerId: id, source: 'whatsapp', device: dev, path: 'settings_whatsapp_share' });
     }
-    if (!code || !qrUrlString || !linkByCode) {
+    if (!publicIdentifier || !qrUrlString || !publicShopUrl) {
       return;
     }
     const line1 = `Order directly from ${shopName}`;
-    const text = `${line1}\n${linkByCode}`;
-    const safe = `fafo-shop-qr-${code.toLowerCase()}.png`;
+    const text = `${line1}\n${publicShopUrl}`;
+    const safe = `fafo-shop-qr-${publicIdentifier.toLowerCase()}.png`;
     try {
       const blob = await buildPublicShopQrPngBlob(qrUrlString);
       const file = new File([blob], safe, { type: 'image/png' });
@@ -109,7 +129,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       '_blank',
       'noopener,noreferrer',
     );
-  }, [code, qrUrlString, linkByCode, shopName, sid]);
+  }, [publicIdentifier, qrUrlString, publicShopUrl, shopName, sid]);
 
   const onShare = useCallback(async () => {
     if (!shareUrl) return;
@@ -129,7 +149,7 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
     }
   }, [shareUrl, copy, shopName]);
 
-  if (!seller || !code) {
+  if (!seller || !publicIdentifier) {
     return (
       <div className="card stack" style={{ marginBottom: '0.75rem' }}>
         <h2 className="settings-section-h2" style={{ margin: 0, fontSize: '1rem' }}>
@@ -157,12 +177,12 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       <div className="add-item-field" style={{ margin: 0 }}>
         <span className="label">Shop link</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <input className="input" readOnly value={linkByCode} style={{ flex: '1 1 12rem' }} />
+          <input className="input" readOnly value={publicShopUrl} style={{ flex: '1 1 12rem' }} />
           <button
             type="button"
             className="btn btn-ghost"
             disabled={readOnly}
-            onClick={() => void copy(linkByCode)}
+            onClick={() => void copy(publicShopUrl)}
           >
             Copy link
           </button>
@@ -171,9 +191,9 @@ export function PublicShopAccessSection({ seller, sellerId: sid, readOnly = fals
       {copyMsg ? <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>{copyMsg}</p> : null}
       <div className="add-item-field" style={{ margin: 0 }}>
         <span className="label">QR code</span>
-        {storedQr ? (
+        {qrPreviewDataUrl ? (
           <img
-            src={storedQr}
+            src={qrPreviewDataUrl}
             alt="QR code for your shop link"
             className="settings-qr-preview"
             style={{ maxWidth: 200, display: 'block' }}

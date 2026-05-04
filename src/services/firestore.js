@@ -38,10 +38,7 @@ import { normalizeShopCode } from '../utils/shopCode';
 import {
   isLegacyBuyerStorefrontUrl,
   publicShopByCodeUrl,
-  publicShopQrTargetUrl,
 } from '../utils/publicShopUrl';
-import { buildPublicShopQrPngBlob } from '../utils/shopQr';
-import { uploadPublicShopQrPng } from './storage';
 
 export { normalizeShopCode };
 
@@ -361,7 +358,7 @@ export async function getSellerBySlug(raw) {
 const ensurePublicInFlight = new Set();
 
 /**
- * Backfill `shopSlug`, public URLs, and `qrUrl` (Storage PNG) for legacy docs; idempotent.
+ * Backfill `shopSlug` and public URLs for legacy docs; idempotent.
  * @param {string} sellerId
  */
 export async function ensureSellerPublicAccess(sellerId) {
@@ -422,18 +419,10 @@ export async function ensureSellerPublicAccess(sellerId) {
       d = again.data() ?? d;
     }
 
-    const openQr = publicShopQrTargetUrl(code);
-    const hasStoredQr = typeof d.qrUrl === 'string' && d.qrUrl.startsWith('http');
-    if (hasStoredQr && !publicUrlChanged) {
+    if (!publicUrlChanged) {
       return;
     }
-    if (!openQr) {
-      return;
-    }
-    const blob = await buildPublicShopQrPngBlob(openQr);
-    const downloadUrl = await uploadPublicShopQrPng(sid, blob);
     await updateDoc(ref, {
-      qrUrl: downloadUrl,
       shopUrl: byCode,
       publicShopUrl: byCode,
       shopSlug,
@@ -652,7 +641,6 @@ export async function createSellerProfile(uid, fields) {
     shopSlug,
     shopUrl: publicUrl,
     publicShopUrl: publicUrl,
-    qrUrl: null,
     location: new GeoPoint(lat, lng),
     address,
     slots: 0,

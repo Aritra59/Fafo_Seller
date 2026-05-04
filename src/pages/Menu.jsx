@@ -31,6 +31,7 @@ import {
   subscribeMenuGroupsBySellerId,
 } from '../services/menuGroupsService';
 import { normalizeShopCode } from '../utils/shopCode';
+import { getBaseUrl } from '../utils/url';
 import { publicShopByCodeUrl } from '../utils/publicShopUrl';
 import {
   compressImageToJpegBlob,
@@ -934,11 +935,12 @@ export function Menu() {
   const comboSavedImagePreviewUrls = editingComboExistingImageUrls.filter(
     (u) => !comboRemovedStoredUrls.includes(u),
   );
+  const baseUrl = getBaseUrl();
 
   const shopViewUrl = useMemo(() => {
     const code = normalizeShopCode(seller?.shopCode ?? seller?.code ?? '');
     return code ? publicShopByCodeUrl(code) : '';
-  }, [seller?.shopCode, seller?.code]);
+  }, [seller?.shopCode, seller?.code, baseUrl]);
 
   const comboRetailBase = useMemo(
     () => sumIncludedItemsRetail(comboSelectedIds, productsById),
